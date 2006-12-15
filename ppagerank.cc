@@ -24,6 +24,7 @@ const static int version_minor = 0;
 PetscErrorCode WriteHeader();
 PetscErrorCode MatLoadBSMAT(MPI_Comm comm,const char* filename, Mat *newmat);
 void WriteSimpleMatrixStats(const char* filename, Mat A);
+PetscErrorCode VecCreateForMat(Mat A, Vec *v);
 
 static char help[] = 
 "usage: ppagerank -m <filename> [options]\n"
@@ -97,12 +98,41 @@ int main(int argc, char **argv)
     ierr=MatLoadBSMAT(PETSC_COMM_WORLD,matrix_filename,&A);CHKERRQ(ierr);
     
     WriteSimpleMatrixStats(matrix_filename, A);
-    
-    
+
+    Vec e,y;
+    ierr=VecCreateForMat(A,&e);CHKERRQ(ierr);
+    ierr=VecSet(e,1.0);CHKERRQ(ierr);
+    ierr=VecDuplicate(e,&y);CHKERRQ(ierr);
+
+    MatMult(A,e,y);
+
+    ierr=VecView(y,PETSC_VIEWER_STDOUT_(PETSC_COMM_WORLD));CHKERRQ(ierr);
+        
     PetscFinalize();
     
     return (0); 
 } 
+
+#undef __FUNCT__
+#define __FUNCT__ "VecCreateForMat" 
+PetscErrorCode VecCreateForMat(Mat A, Vec *v)
+{
+    PetscInt N,n;
+    MPI_Comm comm;
+    PetscErrorCode ierr;
+    ierr=MatGetSize(A,PETSC_NULL,&N);CHKERRQ(ierr);
+    ierr=MatGetLocalSize(A,PETSC_NULL,&n);CHKERRQ(ierr);
+    ierr=PetscObjectGetComm((PetscObject)A,&comm); CHKERRQ(ierr);
+    PetscInt size;
+    ierr=MPI_Comm_size(comm,&size);
+    if (size == 1) {
+        ierr=VecCreateSeq(N,v);
+    }
+    else {
+        ierr=VecCreateMPI(comm,n,N,v);
+    }
+    return (ierr);
+}
 
 #undef __FUNCT__
 #define __FUNCT__ "WriteHeader" 
@@ -600,8 +630,16 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
                 
                 sendcounts[p]++;
             }
+
+            for (PetscInt p=0; p < size; p++) {
+                PetscInfo2(PETSC_NULL," sendcounts[%i] = %i\n", p, sendcounts[p]);
+            }
             
             PetscInfo(PETSC_NULL," test 2...\n");
+
+	    // send data on how much data will be sent around
+            ierr=MPI_Scatter(sendcounts,1,MPIU_INT,&sendcounts[rank],1,MPIU_INT,0,comm);
+                CHKERRQ(ierr);
                 
             // now send
             MPI_Scatterv(root_nz_buf_i,sendcounts,displacements,MPI_INT,
@@ -618,7 +656,7 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
         }
         
         if (cur_nz != local_nz) {
-            SETERRQ2(PETSC_ERR_FILE_UNEXPECTED,
+            SETERRQ3(PETSC_ERR_FILE_UNEXPECTED,
                 "processor %i received only %i nonzeros but expected %i\n",
                 rank, cur_nz, local_nz);
         }
@@ -629,8 +667,12 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
         
 	}
 	else {
+        PetscInfo1(PETSC_NULL," send_rounds = %i\n", send_rounds);
         PetscInt cur_nz=0;
         while (send_rounds > 0) {
+            // get data on how much data will be sent around
+            ierr=MPI_Scatter(sendcounts,1,MPIU_INT,&sendcounts[rank],1,MPIU_INT,0,comm);
+                CHKERRQ(ierr);
             MPI_Scatterv(PETSC_NULL,sendcounts,displacements,MPI_INT,
                 &local_nz_i[cur_nz],local_nz - cur_nz,MPI_INT,
                 0,comm);
@@ -642,10 +684,14 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
                 0,comm);
             cur_nz += sendcounts[rank];
             send_rounds--;
+
+            for (PetscInt p=0; p < size; p++) {
+                PetscInfo2(PETSC_NULL," sendcounts[%i] = %i\n", p, sendcounts[p]);
+            }
         }
         
         if (cur_nz != local_nz) {
-            SETERRQ2(PETSC_ERR_FILE_UNEXPECTED,
+            SETERRQ3(PETSC_ERR_FILE_UNEXPECTED,
                 "processor %i received only %i nonzeros but expected %i\n",
                 rank, cur_nz, local_nz);
         }

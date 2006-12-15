@@ -11,7 +11,7 @@
 # Copyright, Stanford University
 # 
 
-PETSC_DIR=/home/dgleich/dev/lib/petsc-2.3.2-p1
+PETSC_DIR=/home/dgleich/dev/lib/petsc-2.3.2-p3
 DGLEICH_DEV_DIR=/home/dgleich/dev/
 DGLEICH_LIB_DIR=/home/dgleich/dev/lib
 
