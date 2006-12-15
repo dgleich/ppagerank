@@ -11,9 +11,9 @@
 # Copyright, Stanford University
 # 
 
-PETSC_DIR=/home/dgleich/dev/lib/petsc-2.3.2-p3
-DGLEICH_DEV_DIR=/home/dgleich/dev/
-DGLEICH_LIB_DIR=/home/dgleich/dev/lib
+PETSC_DIR ?= /home/dgleich/dev/lib/petsc-2.3.2-p1
+DGLEICH_DEV_DIR ?= /home/dgleich/dev/
+DGLEICH_LIB_DIR ?= /home/dgleich/dev/lib
 
 CFLAGS    = -I$(DGLEICH_DEV_DIR)/c++-util
 FFLAGS    =
@@ -27,9 +27,11 @@ all: ppagerank
 # include the petsc makefile information
 include ${PETSC_DIR}/bmake/common/base
 
-ppagerank: ppagerank.o chkopts
-	${CLINKER} -o ppagerank ppagerank.o  $(LDFLAGS) ${PETSC_LIB}
-	${RM} ppagerank.o
+PPAGERANK_OBJS = ppagerank.o petsc_util.o
+
+ppagerank: $(PPAGERANK_OBJS) chkopts
+	${CLINKER} -o ppagerank $(PPAGERANK_OBJS) $(LDFLAGS) ${PETSC_LIB}
+	${RM} $(PPAGERANK_OBJS)
 
 
 
