@@ -565,8 +565,6 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
                     }
                 }
             }
-            
-            PetscInfo1(PETSC_NULL," sendcounts[rank] = %i\n", sendcounts[rank]);
 
             // compute all the offsets were will store entries 
             // in the arrays to send to each other processor            
@@ -574,10 +572,13 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
             for (PetscInt p=1; p < size; p++) {
                 displacements[p] = dspment;
                 dspment += sendcounts[p];
+                
+                PetscInfo2(PETSC_NULL," sendcounts[%i] = %i\n", p, sendcounts[p]);
+                PetscInfo2(PETSC_NULL," displacement[%i] = %i\n", p, displacements[p]);
             }
             PetscMemzero(sendcounts,sizeof(PetscInt)*size);
             
-            PetscInfo1(PETSC_NULL," displacement[rank] = %i\n", displacements[rank]);
+            
             
             PetscInfo(PETSC_NULL," test...\n");
             
@@ -619,7 +620,7 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
         if (cur_nz != local_nz) {
             SETERRQ2(PETSC_ERR_FILE_UNEXPECTED,
                 "processor %i received only %i nonzeros but expected %i\n",
-                cur_nz, local_nz);
+                rank, cur_nz, local_nz);
         }
         
         // free all the memory
@@ -646,7 +647,7 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
         if (cur_nz != local_nz) {
             SETERRQ2(PETSC_ERR_FILE_UNEXPECTED,
                 "processor %i received only %i nonzeros but expected %i\n",
-                cur_nz, local_nz);
+                rank, cur_nz, local_nz);
         }
 	}
     
