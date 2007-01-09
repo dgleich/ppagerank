@@ -15,4 +15,5 @@
 
 PetscErrorCode MatLoadBSMAT(MPI_Comm comm,const char* filename, Mat *newmat);
 PetscErrorCode VecCreateForMat(Mat A, Vec *v);
+PetscErrorCode MatGetNonzeroCount(Mat A, long long int *nzc, PetscInt *lnzc);
 

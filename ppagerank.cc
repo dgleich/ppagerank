@@ -24,7 +24,7 @@ const static int version_minor = 0;
 // function prototypes
 
 PetscErrorCode WriteHeader();
-void WriteSimpleMatrixStats(const char* filename, Mat A);
+PetscErrorCode WriteSimpleMatrixStats(const char* filename, Mat A);
 PetscErrorCode ComputePageRank(Mat A);
 
 
@@ -173,33 +173,47 @@ PetscErrorCode WriteHeader(void)
  * @param A the distributed memory Petsc matrix
  */
 #undef __FUNCT__
-#define __FUNCT__ "MatLoadBSMAT"
-void WriteSimpleMatrixStats(const char* filename, Mat A)
+#define __FUNCT__ "WriteSimpleMatrixStats"
+PetscErrorCode WriteSimpleMatrixStats(const char* filename, Mat A)
 {
     MPI_Comm comm;
+    PetscErrorCode ierr;
     
     PetscInt m,n;
     PetscInt ml,nl;
-    MatInfo sum_global_info;
-    MatInfo max_global_info;
-    //MatInfo local_info;
-    
-    MatGetInfo(A,MAT_GLOBAL_SUM,&sum_global_info); 
-    MatGetInfo(A,MAT_GLOBAL_MAX,&max_global_info); 
-    //MatGetInfo(A,MAT_LOCAL,&local_info); 
     
     PetscObjectGetComm((PetscObject)A,&comm);
     
     MatGetSize(A,&m,&n);
     MatGetLocalSize(A,&ml,&nl);
     
+    PetscInt max_local_rows, min_local_rows;
+    PetscInt max_local_columns, min_local_columns;
+    
+    ierr=MPI_Reduce(&ml,&max_local_rows,1,MPI_INT,MPI_MAX,0,comm);CHKERRQ(ierr);
+    ierr=MPI_Reduce(&ml,&min_local_rows,1,MPI_INT,MPI_MIN,0,comm);CHKERRQ(ierr);
+    ierr=MPI_Reduce(&nl,&max_local_columns,1,MPI_INT,MPI_MAX,0,comm);CHKERRQ(ierr);
+    ierr=MPI_Reduce(&nl,&min_local_columns,1,MPI_INT,MPI_MIN,0,comm);CHKERRQ(ierr);
+    
+    long long int total_nz = 0;
+    PetscInt local_nz = 0;
+    ierr=MatGetNonzeroCount(A,&total_nz, &local_nz);
+    
+    PetscInt max_local_nz,min_local_nz;
+    
+    ierr=MPI_Reduce(&local_nz,&max_local_nz,1,MPI_INT,MPI_MAX,0,comm);CHKERRQ(ierr);
+    ierr=MPI_Reduce(&local_nz,&min_local_nz,1,MPI_INT,MPI_MIN,0,comm);CHKERRQ(ierr);
+    
+    
     PetscPrintf(comm,"matrix %s\n", filename);
-    PetscPrintf(comm,"rows = %i\n", m);
-    PetscPrintf(comm,"columns = %i\n", n);
-    PetscPrintf(comm,"memory = %.1f\n", sum_global_info.memory);
-    PetscPrintf(comm,"max local rows = %.1f\n", max_global_info.rows_local);
-    PetscPrintf(comm,"max local columns = %.1f\n", max_global_info.columns_local);
-    PetscPrintf(comm,"max local memory = %.1f\n", max_global_info.memory);
+    PetscPrintf(comm,"rows       = %10i\n", m);
+    PetscPrintf(comm,"columns    = %10i\n", n);
+    PetscPrintf(comm,"nnz        = %10lli\n", total_nz);
+    PetscPrintf(comm,"local rows = (%10i,%10i)\n", min_local_rows, max_local_rows);
+    PetscPrintf(comm,"local cols = (%10i,%10i)\n", min_local_columns, max_local_columns);
+    PetscPrintf(comm,"local nzs  = (%10i,%10i)\n", min_local_nz, max_local_nz);
+    
+    return (MPI_SUCCESS);
 }
 
 /**

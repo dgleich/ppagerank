@@ -33,6 +33,51 @@ PetscErrorCode RedistributeRows(MPI_Comm comm,
 
 
 /**
+ * Compute the number of nonzeros in a matrix.
+ * 
+ * This operation is collective on the group of processors underlying the 
+ * matrix.
+ * 
+ * @param A the matrix
+ * @param nzc the total number of non-zeros in the matrix.
+ * @param lnzc the local number of non-zeros in the matrix.
+ */
+#undef __FUNCT__
+#define __FUNCT__ "MatGetNonzeroCount" 
+PetscErrorCode MatGetNonzeroCount(Mat A, long long int *nzc, PetscInt *lnzc)
+{
+    // get the communicator
+    MPI_Comm comm;
+    PetscErrorCode ierr; 
+    
+    ierr=PetscObjectGetComm((PetscObject)A,&comm);CHKERRQ(ierr);
+    
+    // get the ownership range
+    PetscInt Istart, Iend;
+    ierr=MatGetOwnershipRange(A,&Istart, &Iend);CHKERRQ(ierr);
+    
+    // get the local number of non-zeros
+    long long int local_nz=0;
+    for (PetscInt i = Istart; i < Iend; ++i) {
+        PetscInt ncols=0;
+        ierr=MatGetRow(A,i,&ncols,PETSC_NULL,PETSC_NULL);CHKERRQ(ierr);
+        local_nz += ncols;
+        ierr=MatRestoreRow(A,i,&ncols,PETSC_NULL,PETSC_NULL);CHKERRQ(ierr);
+    }
+    
+    if (lnzc != PETSC_NULL) {
+        *lnzc = local_nz;
+    }
+    
+    if (nzc != PETSC_NULL) {
+        ierr=MPI_Allreduce(&local_nz, nzc, 1, MPI_LONG_LONG_INT, MPI_SUM, comm);
+        CHKERRQ(ierr);
+    } 
+    
+    return (MPI_SUCCESS);
+}
+
+/**
  * Create a vector for a matrix vector multiplication against
  * a particular matrix.
  * 
