@@ -26,11 +26,10 @@
 #include <vector>
 
 
-void RedistributeRows(MPI_Comm comm,
+PetscErrorCode RedistributeRows(MPI_Comm comm,
         PetscInt M, PetscInt m, 
         PetscInt* rowners,
-        PetscInt* ourlens,
-        PetscInt wrows, PetscInt wnnz);
+        PetscInt* ourlens);
 
 
 /**
@@ -300,16 +299,12 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
     //
     
     PetscTruth redistribute=PETSC_FALSE;
-    PetscInt wrows=1, wnnz=1;
     
     PetscOptionsHasName(PETSC_NULL, "-matload_redistribute",&redistribute); 
-    PetscOptionsGetInt(PETSC_NULL, "-matload_redistribute_wrows",&wrows, PETSC_NULL);
-    PetscOptionsGetInt(PETSC_NULL, "-matload_redistribute_wnnz",&wnnz, PETSC_NULL);
-
     
     if (redistribute) {
-    
-        RedistributeRows(comm, M, m, rowners, ourlens, wrows, wnnz);
+
+        RedistributeRows(comm, M, m, rowners, ourlens);
     
         PetscFree2(ourlens,offlens);
 
@@ -333,9 +328,11 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
         if (root) {
             // root readin the local part
             if (gzipped_degs) {
+                gzseek(gfd_degs, 0, SEEK_SET);
                 gzread(gfd_degs, ourlens, sizeof(PetscInt)*m);
             }
             else {
+                lseek(fd_degs, 0, SEEK_SET);
                 read(fd_degs, ourlens, sizeof(PetscInt)*m);
             }
 
@@ -652,17 +649,155 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
 }
 
 /**
- * Compute a new distribution of rows 
+ * Compute a new distribution of rows to locally optimize wrows*M + wnnz*NNZ
+ * 
+ * The "optimization" procedure is simple.  Add rows to the current processor
+ * until the quantity wrows*M_proc+wnnz*NNZ_proc >= (wrows*M+wnnz*NNZ)/size.
+ * In other words, we make a linear scan over all the rows of the matrix and
+ * keep adding rows to the current processor until the average balance is 
+ * exceeded.  The last processor gets all remaining rows.
+ * 
+ * The algorithm proceeds as follows
+ *   determine the size and rank of each process in the communicator
+ *   determine the wrows and wnnz coefficients 
+ *   compute the total balance and average balance
+ * r loop over all processors and receive the data from their rows 
+ * 
+ * @param comm the MPI communicator underlying the matrix load
+ * @param M the global number of rows in the matrix
+ * @param m the local number of rows on the processor
+ * @param NNz the global number of nonzeros in the matrix
+ * @param rowners INPUT, the length "size+1" array of rows owned by each processor, and
+ * OUTPUT, the new set of rows owned by each processor. 
+ * @param ourlens the length "rowners[rank+1]-rowners[rank]" array containing
+ * the length of each row on the current processor.
+ * 
+ * 
  */
-void RedistributeRows(MPI_Comm comm,
-        PetscInt M, PetscInt m, 
+PetscErrorCode RedistributeRows(MPI_Comm comm,
+        PetscInt M, PetscInt m,
         PetscInt* rowners,
-        PetscInt* ourlens,
-        PetscInt wrows, PetscInt wnnz)
+        PetscInt* ourlens)
 {
-    PetscInfo(PETSC_NULL, "redistributing the rows of the matrix...");
+    PetscInfo(PETSC_NULL, " redistributing the rows of the matrix...\n");
     
+    PetscMPIInt rank,size;
+    PetscErrorCode ierr;
+       
+    // get the rank and size
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
     
+    // compute the nnz that will be local
+    PetscInt local_nz=0;
+    for (PetscInt i=0; i<m; i++) { local_nz += ourlens[i]; }
+    
+    PetscInt *procs_nz;
+    PetscMalloc(sizeof(PetscInt)*size, &procs_nz);
+    procs_nz[rank] = local_nz;
+    
+    PetscInfo1(PETSC_NULL," local_nz = %i\n",local_nz);
+    
+    // compute the total nnz
+    ierr=MPI_Allgather(&local_nz,1,MPIU_INT,procs_nz,1,MPIU_INT,comm);CHKERRQ(ierr);
+    long long int NNZ = 0;
+    for (PetscInt i=0; i<size; i++) { NNZ += procs_nz[i]; }
+
+    PetscInt wrows=1, wnnz=1;
+    
+    PetscOptionsGetInt(PETSC_NULL, "-matload_redistribute_wrows",&wrows, PETSC_NULL);
+    PetscOptionsGetInt(PETSC_NULL, "-matload_redistribute_wnnz",&wnnz, PETSC_NULL);
+    
+    long long int total_balance = wrows*M + wnnz*NNZ;
+    long long int average_balance = total_balance/size;
+    
+    if (!rank) 
+    {
+        PetscInfo2(PETSC_NULL, " total redistribution value %lli, average redistribution value %lli\n",
+            total_balance, average_balance); 
+        PetscInt *buf = NULL;
+        PetscInt max_buf_size = 0;
+        
+        // compute the maximum size of the buffer
+        for (PetscInt i = 0; i < size; i++) 
+        {
+            if (rowners[i+1]-rowners[i] > max_buf_size) {
+                max_buf_size = rowners[i+1]-rowners[i];
+            }
+        }
+        
+        // allocate the buffer
+        PetscMalloc(sizeof(PetscInt)*max_buf_size, &buf);
+        
+        PetscInt cur_proc = 0;
+        long long int cur_proc_nr = 0;
+        long long int cur_proc_nnz = 0;
+        
+        PetscInt cur_buf_index = 0;
+        PetscInt cur_buf_proc = 0;
+        PetscInt cur_buf_size = 0;
+       
+        for (PetscInt i = 0; i < M; i++, cur_buf_index++) 
+        {
+            // check if we need more buffer data
+            if (cur_buf_index >= cur_buf_size) 
+            {
+                // get more buffer data from cur_buf_proc
+                cur_buf_size = rowners[cur_buf_proc+1] - rowners[cur_buf_proc];
+                if (cur_buf_proc != 0) {
+                    MPI_Status status;
+                    ierr=MPI_Recv(buf, cur_buf_size, MPI_INT, cur_buf_proc, 0, comm, &status);
+                        CHKERRQ(ierr);
+                }
+                else {
+                    // copy data from the root list
+                    memcpy(buf, ourlens, sizeof(PetscMPIInt)*cur_buf_size);
+                }
+                cur_buf_proc++;
+                
+                cur_buf_index = 0;
+            }
+            
+            // add the current row to the processor
+            cur_proc_nr++;
+            cur_proc_nnz += buf[cur_buf_index];
+            
+            // spill to the next processor
+            if (cur_proc_nr*wrows + cur_proc_nnz*wnnz >= average_balance) {
+                rowners[cur_proc+1] = i+1;
+                
+                PetscInfo4(PETSC_NULL," proc %3i, %i -> %i, balance %lli\n",
+                    cur_proc,rowners[cur_proc],rowners[cur_proc+1],
+                    cur_proc_nr*wrows + cur_proc_nnz*wnnz); 
+                
+                cur_proc++;
+                
+                cur_proc_nr = 0;
+                cur_proc_nnz = 0;
+            }
+        }
+        
+        
+        // free the buffer
+        ierr=PetscFree(buf);
+    }
+    else
+    {
+        // send data to root
+        ierr=MPI_Send(ourlens, rowners[rank+1]-rowners[rank], MPI_INT, 0, 0, comm);
+                        CHKERRQ(ierr);
+        // future code
+        // MPI_Status status;
+        // PetscMPIInt nrows;
+        // ierr=MPI_Recv(&nrows, 1, MPI_INT, 0, 0, comm, &status);CHKERRQ(ierr);
+        // ierr=PetscRealloc(ourlens,nrows);
+        // ierr=MPI_Recv(&ourlens, nrows, MPI_INT, 0, 0, comm, &status);CHKERRQ(ierr);
+    }
+    
+    // broadcast the new set of row owners
+    ierr=MPI_Bcast(rowners,size+1, MPI_INT, 0, comm);CHKERRQ(ierr);
+    
+    return (MPI_SUCCESS);
 }
 
 

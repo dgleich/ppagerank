@@ -25,6 +25,7 @@ const static int version_minor = 0;
 
 PetscErrorCode WriteHeader();
 void WriteSimpleMatrixStats(const char* filename, Mat A);
+PetscErrorCode ComputePageRank(Mat A);
 
 
 static char help[] = 
@@ -82,10 +83,11 @@ int main(int argc, char **argv)
 //        return (-1);
 //    }
     
-    WriteHeader();
-    
-    // load the matrix filename
+    //
+    // begin options parsing
+    //
  
+    // get the matrix filename
     char matrix_filename[PETSC_MAX_PATH_LEN];
     ierr=PetscOptionsGetString(PETSC_NULL,"-m",matrix_filename,PETSC_MAX_PATH_LEN,&option_flag);
         CHKERRQ(ierr); 
@@ -95,19 +97,29 @@ int main(int argc, char **argv)
         return (-1);
     }
     
+    PetscTruth script;
+    ierr=PetscOptionsHasName(PETSC_NULL,"-script",&script);
+    
+    //
+    // end options parsing
+    //
+       
+    WriteHeader();
+    
     Mat A;
     ierr=MatLoadBSMAT(PETSC_COMM_WORLD,matrix_filename,&A);CHKERRQ(ierr);
     
     WriteSimpleMatrixStats(matrix_filename, A);
-
-    Vec e,y;
-    ierr=VecCreateForMat(A,&e);CHKERRQ(ierr);
-    ierr=VecSet(e,1.0);CHKERRQ(ierr);
-    ierr=VecDuplicate(e,&y);CHKERRQ(ierr);
-
-    MatMult(A,e,y);
-
-    //ierr=VecView(y,PETSC_VIEWER_STDOUT_(PETSC_COMM_WORLD));CHKERRQ(ierr);
+    
+    if (script) {
+        // make sure there are no options left
+        // PetscOptionsLeft();
+        
+        // PetscOptionsCreate();
+        // PetscOptionsInsert(argc,argv)   
+    } else {
+        //ierr=ComputePageRank(A); CHKERRQ(ierr);
+    }
         
     PetscFinalize();
     
@@ -143,6 +155,9 @@ PetscErrorCode WriteHeader(void)
     PetscPrintf(PETSC_COMM_WORLD, "nprocs = %i\n", size);
     
     PetscSynchronizedPrintf(PETSC_COMM_WORLD, "[%3i] %s running...\n", rank, name);
+    PetscSynchronizedFlush(PETSC_COMM_WORLD);
+    
+    ierr=MPI_Barrier(PETSC_COMM_WORLD);CHKERRQ(ierr);
     
     return (MPI_SUCCESS);
 }		
@@ -185,5 +200,22 @@ void WriteSimpleMatrixStats(const char* filename, Mat A)
     PetscPrintf(comm,"max local rows = %.1f\n", max_global_info.rows_local);
     PetscPrintf(comm,"max local columns = %.1f\n", max_global_info.columns_local);
     PetscPrintf(comm,"max local memory = %.1f\n", max_global_info.memory);
+}
+
+/**
+ * Compute a PageRank vector for a PETSc Matrix A.
+ * 
+ * The ComputePageRank function loads all of its options from 
+ * the command line.
+ * 
+ * @param A the matrix used for PageRank
+ * @param transp a flag indicating if the matrix is transposed so that
+ * the edge from page i to page j is in the ith column of the matrix
+ * instead of the ith row of the matrix.
+ * @return MPI_SUCCESS unless there was an error.
+ */
+PetscErrorCode ComputePageRank(Mat A)
+{
+    return (MPI_SUCCESS);
 }
 
