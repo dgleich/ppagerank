@@ -773,8 +773,9 @@ PetscErrorCode RedistributeRows(MPI_Comm comm,
             if (cur_proc_nr*wrows + cur_proc_nnz*wnnz >= average_balance) {
                 newrowners[cur_proc+1] = i+1;
                 
-                PetscInfo4(PETSC_NULL," proc %3i, %i -> %i, balance %lli\n",
+                PetscInfo6(PETSC_NULL," proc %3i, %i -> %i, rows=%lli; nz=%lli; balance=%lli\n",
                     cur_proc,rowners[cur_proc],rowners[cur_proc+1],
+                    cur_proc_nr, cur_proc_nnz,
                     cur_proc_nr*wrows + cur_proc_nnz*wnnz); 
                 
                 cur_proc++;
@@ -783,10 +784,40 @@ PetscErrorCode RedistributeRows(MPI_Comm comm,
                 cur_proc_nnz = 0;
             }
         }
-        
-        // handle the cleanup
+        // handle the cleanup from the loop, note that cur_proc 
+        // cannot be greater than size-1 because otherwise we violate
+        // the rule about exceeding the average on each processor.
+        if (cur_proc != size) 
+        {
+            // in this case, we did not finish assignment
+            // of rows to processors
+            if (cur_proc == size-1) {
+                // this case is easy, just give the last processor everything
+                newrowners[cur_proc+1] = M;
+                PetscInfo6(PETSC_NULL," proc %3i, %i -> %i, rows=%lli; nz=%lli; balance=%lli\n",
+                    cur_proc,rowners[cur_proc],rowners[cur_proc+1],
+                    cur_proc_nr, cur_proc_nnz,
+                    cur_proc_nr*wrows + cur_proc_nnz*wnnz); 
+                cur_proc++;
+            }
+            else
+            {
+                PetscPrintf(PETSC_COMM_SELF,"** Warning ** This code branch has not been evaluated.\n");
+                // divide the rest of the rows evenly between processors
+                PetscInt last_assigned_row = newrowners[cur_proc];
+                PetscInt remaining_rows = M - last_assigned_row;
+                PetscInt remaining_procs = size - cur_proc;
+                for (; cur_proc < size; cur_proc++) {
+                    // just use the same formula to distribute the remaining
+                    // rows evenly
+                    newrowners[cur_proc+1] = newrowners[cur_proc] 
+			+ remaining_rows/remaining_procs + ((remaining_rows%remaining_procs)>(cur_proc-remaining_procs));
+                }
+            }    
+        }        
+
         // 1.  make sure we processed all the buffers
-        if (cur_proc != size) {
+        if (cur_proc != size || newrowners[size] != M) {
             SETERRQ(PETSC_ERR_PLIB,
                 "Undetermined error!\n");
         }
