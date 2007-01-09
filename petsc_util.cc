@@ -674,6 +674,8 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
  * 
  * 
  */
+ #undef __FUNCT__
+#define __FUNCT__ "RedistributeRows"
 PetscErrorCode RedistributeRows(MPI_Comm comm,
         PetscInt M, PetscInt m,
         PetscInt* rowners,
@@ -736,6 +738,11 @@ PetscErrorCode RedistributeRows(MPI_Comm comm,
         PetscInt cur_buf_index = 0;
         PetscInt cur_buf_proc = 0;
         PetscInt cur_buf_size = 0;
+        
+        // allocate the new array of rowners
+        PetscInt *newrowners;
+        PetscMalloc(sizeof(PetscInt)*(size+1),&newrowners);
+        newrowners[0] = 0;
        
         for (PetscInt i = 0; i < M; i++, cur_buf_index++) 
         {
@@ -764,7 +771,7 @@ PetscErrorCode RedistributeRows(MPI_Comm comm,
             
             // spill to the next processor
             if (cur_proc_nr*wrows + cur_proc_nnz*wnnz >= average_balance) {
-                rowners[cur_proc+1] = i+1;
+                newrowners[cur_proc+1] = i+1;
                 
                 PetscInfo4(PETSC_NULL," proc %3i, %i -> %i, balance %lli\n",
                     cur_proc,rowners[cur_proc],rowners[cur_proc+1],
@@ -777,6 +784,15 @@ PetscErrorCode RedistributeRows(MPI_Comm comm,
             }
         }
         
+        // handle the cleanup
+        // 1.  make sure we processed all the buffers
+        if (cur_proc != size) {
+            SETERRQ(PETSC_ERR_PLIB,
+                "Undetermined error!\n");
+        }
+        
+        memcpy(rowners,newrowners,sizeof(PetscInt)*(size+1));
+        ierr=PetscFree(newrowners);
         
         // free the buffer
         ierr=PetscFree(buf);
@@ -796,6 +812,7 @@ PetscErrorCode RedistributeRows(MPI_Comm comm,
     
     // broadcast the new set of row owners
     ierr=MPI_Bcast(rowners,size+1, MPI_INT, 0, comm);CHKERRQ(ierr);
+    
     
     return (MPI_SUCCESS);
 }
