@@ -109,6 +109,38 @@ PetscErrorCode VecCreateForMat(Mat A, Vec *v)
     return (ierr);
 }
 
+/**
+ * Create a vector for a tranposed matrix vector multiplication against
+ * a particular matrix.
+ * 
+ * This function ensures that the vector has the correct local size
+ * to multiply against the transpose of a distributed memory matrix.
+ * 
+ * @param A the matrix for multiplication 
+ * @param v the new vector
+ * @return the result from the final VecCreate call
+ */
+#undef __FUNCT__
+#define __FUNCT__ "VecCreateForMatTranspose" 
+PetscErrorCode VecCreateForMatTranspose(Mat A, Vec *v)
+{
+    PetscInt N,n;
+    MPI_Comm comm;
+    PetscErrorCode ierr;
+    ierr=MatGetSize(A,&N,PETSC_NULL);CHKERRQ(ierr);
+    ierr=MatGetLocalSize(A,&n,PETSC_NULL);CHKERRQ(ierr);
+    ierr=PetscObjectGetComm((PetscObject)A,&comm); CHKERRQ(ierr);
+    PetscInt size;
+    ierr=MPI_Comm_size(comm,&size);
+    if (size == 1) {
+        ierr=VecCreateSeq(N,v);
+    }
+    else {
+        ierr=VecCreateMPI(comm,n,N,v);
+    }
+    return (ierr);
+}
+
 
 /**
  * MatLoadBSMAT loads a binary sparse matrix to a distributed memory
@@ -893,4 +925,74 @@ PetscErrorCode RedistributeRows(MPI_Comm comm,
     return (MPI_SUCCESS);
 }
 
+/**
+ * Compute the inverse of every non-zero entry in the vector.
+ * 
+ * Collective on Vec.
+ * 
+ * @param v the vector
+ */
+PetscErrorCode VecNonzeroInv(Vec v)
+{
+    PetscErrorCode ierr;
+    PetscInt       i,n;
+    PetscScalar    *x;
+
+    ierr=VecGetLocalSize(v,&n);CHKERRQ(ierr);
+    ierr=VecGetArray(v,&x);CHKERRQ(ierr);
+    for (i=0; i<n; i++) {
+        if (PetscAbsScalar(x[i]) > 1e-16) {
+            x[i] = 1./x[i];
+        }
+    }
+    ierr=VecRestoreArray(v,&x);CHKERRQ(ierr);
+    return (MPI_SUCCESS);
+}
+
+/**
+ * Check if a matrix is square.
+ * 
+ * Not collective.
+ * 
+ * @param A the matrix to test
+ * @param square a boolean output set to PETSC_TRUE if the matrix is square
+ */
+PetscErrorCode MatIsSquare(Mat A, PetscTruth *square)
+{
+    PetscErrorCode ierr;
+    PetscInt M,N;
+    ierr=MatGetSize(A,&M,&N);CHKERRQ(ierr);
+    if (square != PETSC_NULL) { *square = (PetscTruth)(M == N); }
+    return (MPI_SUCCESS);
+}
+
+/**
+ * Compute an indicator vector from the nonzeros of the vector
+ * 
+ * Collective on Vec.
+ * 
+ * v[i] = 1.0 if -eps < |v[i]| < eps
+ * v[i] = 0.0 otherwise 
+ * 
+ * @param v the vector
+ */
+PetscErrorCode VecNonzeroIndicator(Vec v)
+{
+    PetscErrorCode ierr;
+    PetscInt       i,n;
+    PetscScalar    *x;
+
+    ierr=VecGetLocalSize(v,&n);CHKERRQ(ierr);
+    ierr=VecGetArray(v,&x);CHKERRQ(ierr);
+    for (i=0; i<n; i++) {
+        if (PetscAbsScalar(x[i]) > 1e-16) {
+            x[i] = 1.0;
+        }
+        else {
+            x[i] = 0.0;
+        }
+    }
+    ierr=VecRestoreArray(v,&x);CHKERRQ(ierr);
+    return (MPI_SUCCESS);
+}
 

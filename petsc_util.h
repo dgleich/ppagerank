@@ -14,6 +14,13 @@
 #include "petscvec.h"
 
 PetscErrorCode MatLoadBSMAT(MPI_Comm comm,const char* filename, Mat *newmat);
-PetscErrorCode VecCreateForMat(Mat A, Vec *v);
+
 PetscErrorCode MatGetNonzeroCount(Mat A, long long int *nzc, PetscInt *lnzc);
+PetscErrorCode MatIsSquare(Mat A, PetscTruth *square);
+
+PetscErrorCode VecCreateForMat(Mat A, Vec *v);
+PetscErrorCode VecCreateForMatTranspose(Mat A, Vec *v);
+PetscErrorCode VecNonzeroInv(Vec v);
+PetscErrorCode VecNonzeroIndicator(Vec v);
+//PetscErrorCode VecNormDiff(Vec x, Vec y, NormType ntype, PetscScalar *norm
 
