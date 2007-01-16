@@ -831,12 +831,15 @@ PetscErrorCode MatLoadBVGraph(MPI_Comm comm_in,const char* filename, Mat *newmat
         typedef yasmic::bvgraph_matrix::sequential_iterator nonzero_iter;
         nonzero_iter nzi(gm);
 
+        // when we compute averages, we want to round up, hence the (val%size > 0)
+        // component
+
         long long int total_balance = wrows*M + wnnz*NNZ;
-        long long int average_balance = total_balance/size;
+        long long int average_balance = total_balance/size + (total_balance%size > 0);
         
         PetscInt average_rows, average_nz;
-        average_rows = M/size;
-        average_nz = NNZ/size;
+        average_rows = M/size+(M%size > 0);
+        average_nz = NNZ/size+(NNZ%size > 0);
         
         // these arrays are resizable vectors for the local data
         std::vector<PetscInt> rowptr(average_rows);
@@ -901,6 +904,8 @@ PetscErrorCode MatLoadBVGraph(MPI_Comm comm_in,const char* filename, Mat *newmat
                     // capture variables
                     m = cur_proc_m;
                     local_nz = cur_proc_nz;
+                    PetscInfo3(PETSC_NULL, " copying data (%i,%i) to proc %i\n",
+                         cur_proc_m, cur_proc_nz, cur_proc);
                     // allocate memory
                     PetscMalloc(sizeof(PetscInt)*(m+1), &local_rowptr);
                     PetscMalloc(sizeof(PetscInt)*local_nz, &local_cols);
@@ -956,6 +961,7 @@ PetscErrorCode MatLoadBVGraph(MPI_Comm comm_in,const char* filename, Mat *newmat
         ierr=MPI_Recv(&message,2,MPI_INT,0,tag,comm,&status);CHKERRQ(ierr);
         m = message[0];
         local_nz = message[1];
+        PetscInfo2(PETSC_NULL, " receiving %i rows, %i nnz from root\n", m, local_nz);
         // allocate memory
         PetscMalloc(sizeof(PetscInt)*(m+1), &local_rowptr);
         PetscMalloc(sizeof(PetscInt)*local_nz, &local_cols);
@@ -963,16 +969,16 @@ PetscErrorCode MatLoadBVGraph(MPI_Comm comm_in,const char* filename, Mat *newmat
         
         // receive the rows array
         // receive the cols array
-        ierr=MPI_Recv(&local_rowptr,m,MPI_INT,0,tag,comm,&status);CHKERRQ(ierr);
-        ierr=MPI_Recv(&local_cols,local_nz,MPI_INT,0,tag,comm,&status);CHKERRQ(ierr);
+        ierr=MPI_Recv(local_rowptr,m,MPI_INT,0,tag,comm,&status);CHKERRQ(ierr);
+        ierr=MPI_Recv(local_cols,local_nz,MPI_INT,0,tag,comm,&status);CHKERRQ(ierr);
     }
-    
-    PetscInfo(PETSC_NULL, " done with data transfer!\n");
     
     // get the total matrix size
     {
-        int message[2] = { M, N };
-        ierr=MPI_Bcast(&message,2,MPI_INT,0,comm); CHKERRQ(ierr);
+        //int message[2] = { M, N };
+        //ierr=MPI_Bcast(message,2,MPI_INT,0,comm); CHKERRQ(ierr);
+        ierr=MPI_Bcast(&M,1,MPIU_INT,0,comm); CHKERRQ(ierr);
+        ierr=MPI_Bcast(&N,1,MPIU_INT,0,comm); CHKERRQ(ierr);
     }
     
     // post processing of the received data
@@ -1005,6 +1011,8 @@ PetscErrorCode MatLoadBVGraph(MPI_Comm comm_in,const char* filename, Mat *newmat
             local_vals[i] = 1.0;
         }
     }
+
+    PetscInfo5(PETSC_NULL," assembling matrix (M=%i;N=%i;m=%i;n=%i;local_nz=%i).\n", M, N, m, n, local_nz);
     
     // we now have all data on the processor in CSR format.
     
