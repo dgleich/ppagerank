@@ -14,6 +14,7 @@
 #include "petscvec.h"
 
 PetscErrorCode MatLoadBSMAT(MPI_Comm comm,const char* filename, Mat *newmat);
+PetscErrorCode MatLoadBVGraph(MPI_Comm comm,const char* filename, Mat *newmat);
 
 PetscErrorCode MatGetNonzeroCount(Mat A, long long int *nzc, PetscInt *lnzc);
 PetscErrorCode MatIsSquare(Mat A, PetscTruth *square);

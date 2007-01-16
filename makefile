@@ -12,7 +12,7 @@
 # 
 
 PETSC_DIR ?= /home/dgleich/dev/lib/petsc-2.3.2-p1
-DGLEICH_DEV_DIR ?= /home/dgleich/dev/
+DGLEICH_DEV_DIR ?= /home/dgleich/dev
 DGLEICH_LIB_DIR ?= /home/dgleich/dev/lib
 
 CFLAGS    = -I$(DGLEICH_DEV_DIR)/c++-util
@@ -27,11 +27,15 @@ all: ppagerank
 # include the petsc makefile information
 include ${PETSC_DIR}/bmake/common/base
 
-PPAGERANK_OBJS = ppagerank.o petsc_util.o
+PPAGERANK_LOCAL_OBJS = ppagerank.o petsc_util.o bvgraph_matrix.o
+PPAGERANK_REMOTE_OBJS = $(DGLEICH_DEV_DIR)/c++-util/util/file.o  $(DGLEICH_DEV_DIR)/c++-util/util/string.o
+PPAGERANK_REMOTE_OBJS_LINKFILES = file.o string.o
+PPAGERANK_COMPILE_OBJS = $(PPAGERANK_LOCAL_OBJS) $(PPAGERANK_REMOTE_OBJS)
+PPAGERANK_LINK_OBJS = $(PPAGERANK_LOCAL_OBJS) $(PPAGERANK_REMOTE_OBJS_LINKFILES)
 
-ppagerank: $(PPAGERANK_OBJS) chkopts
-	${CLINKER} -o ppagerank $(PPAGERANK_OBJS) $(LDFLAGS) ${PETSC_LIB}
-	${RM} $(PPAGERANK_OBJS)
+ppagerank: $(PPAGERANK_COMPILE_OBJS) chkopts
+	${CLINKER} -o ppagerank $(PPAGERANK_LINK_OBJS) $(LDFLAGS) ${PETSC_LIB}
+	${RM} $(PPAGERANK_LINK_OBJS)
 
 
 

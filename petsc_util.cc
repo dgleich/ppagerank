@@ -16,14 +16,16 @@
 #include <zlib.h>
 
 // include extra file manipulation operators 
-#include <util/file.hpp>
-#include <util/string.hpp>
+#include <util/file.h>
+#include <util/string.h>
 
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 
 #include <vector>
+
+#include "bvgraph_matrix.h"
 
 PetscErrorCode RedistributeRows(MPI_Comm comm,
         PetscInt M, PetscInt m, 
@@ -191,7 +193,6 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
     gzFile gfd_mat, gfd_degs;
     bool matfile_error=false,degsfile_error=false;
     
-
     if (root) {
         
         //
@@ -741,6 +742,296 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
     return (MPI_SUCCESS);
 }
 
+
+/**
+ *
+ */
+#undef __FUNCT__
+#define __FUNCT__ "MatLoadBVGraph"  
+PetscErrorCode MatLoadBVGraph(MPI_Comm comm_in,const char* filename, Mat *newmat)
+{
+    PetscMPIInt rank,size;
+    PetscMPIInt tag;
+    MPI_Status status;
+    MPI_Comm   comm;
+    PetscErrorCode ierr;
+
+    ierr=PetscCommDuplicate(comm_in,&comm,&tag);CHKERRQ(ierr);
+        
+    // get the rank and size
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
+    
+    // allocate a variable to indicate the root processor
+    bool root = !rank;
+
+    if (root) {
+        
+        // grab the filename
+        std::string propfilename = util::split_filename(std::string(filename)).first + ".properties";
+        
+        if (!util::file_exists(filename)) {
+            SETERRQ1(PETSC_ERR_FILE_OPEN,
+                "The matrix file %s does not exist",filename); 
+        }
+        if (!util::file_exists(propfilename)) {
+            SETERRQ1(PETSC_ERR_FILE_OPEN,
+                "The matrix property file %s does not exist",propfilename.c_str());
+        }   
+    }
+     
+    MPI_Barrier(comm);   
+
+    // 
+    // processor 1 will read data from the file and send large data
+    // chunks to the other processors.
+    // 
+    // unfortunately, the BVGraph format does not allow processor 1
+    // to know the size of the data it is sending until it needs it,
+    // so processor 1 will maintain a std::vector that will
+    // be resized as required.
+    //
+    
+    PetscInt M,N;
+    PetscInt m,n;
+        
+    //
+    // load redistribution options
+    //
+    
+    PetscTruth redistribute=PETSC_FALSE;
+    PetscOptionsHasName(PETSC_NULL, "-matload_redistribute",&redistribute);
+    
+    PetscInt wrows=1, wnnz=1;
+    PetscOptionsGetInt(PETSC_NULL, "-matload_redistribute_wrows",&wrows, PETSC_NULL);
+    PetscOptionsGetInt(PETSC_NULL, "-matload_redistribute_wnnz",&wnnz, PETSC_NULL);
+    
+    // alter the distribution if they didn't specify redistribute
+    if (!redistribute) { wrows = 1; wnnz = 0; }
+
+    //
+    // variables for matrix setup 
+    //    
+    PetscInt local_nz;
+    PetscInt *local_rowptr;
+    PetscInt *local_cols;
+    PetscScalar *local_vals;
+    
+    if (root)
+    {
+        // send matrix data from processor 1 to other processors
+        yasmic::bvgraph_matrix gm(util::split_filename(std::string(filename)).first.c_str());
+        M = N = gm.num_nodes();
+        
+        // load the number of nonzeros
+        long long int NNZ = gm.num_arcs();
+        
+        PetscInfo2(PETSC_NULL, " M = %i; NNZ = %lli\n", M, NNZ);
+        
+        typedef yasmic::bvgraph_matrix::sequential_iterator nonzero_iter;
+        nonzero_iter nzi(gm);
+
+        long long int total_balance = wrows*M + wnnz*NNZ;
+        long long int average_balance = total_balance/size;
+        
+        PetscInt average_rows, average_nz;
+        average_rows = M/size;
+        average_nz = NNZ/size;
+        
+        // these arrays are resizable vectors for the local data
+        std::vector<PetscInt> rowptr(average_rows);
+        std::vector<PetscInt> cols(average_nz);
+        
+        if (redistribute) {
+            PetscInfo2(PETSC_NULL, " total redistribution value %lli, average redistribution value %lli\n",
+                total_balance, average_balance);
+        }  
+        
+        long long int cur_balance = 0;
+        PetscInt cur_proc = 0;
+        PetscInt cur_proc_m = 0;
+        PetscInt cur_proc_nz = 0;
+        
+        while (!nzi.rows_end())
+        {
+            // while there are rows left
+            nzi.next_row();
+            
+            PetscInt outd = nzi.cur_row_outdegree();
+            PetscInt prev_cur_proc_nz = cur_proc_nz;
+            
+            // check if we have room for this data
+            // in the current storage area
+            if (rowptr.size() < (unsigned)(cur_proc_m+1)) {
+                // resize rowptr
+                rowptr.resize(rowptr.size() + 1 + rowptr.size()/10);
+                PetscInfo1(PETSC_NULL, " resized rowptr buffer to %i elements\n", rowptr.size());
+            }
+            if (cols.size() < (unsigned)(cur_proc_nz+outd)) {
+                // resize cols
+                cols.resize(cols.size() + outd + cols.size()/10);
+                PetscInfo1(PETSC_NULL, " resized cols buffer to %i elements\n", cols.size());
+            }
+            
+            // add the data
+            rowptr[cur_proc_m] = outd;
+            while (!nzi.row_arcs_end()) {
+                nzi.next_row_arc();
+                cols[cur_proc_nz] = nzi.cur_row_arc_target();
+                cur_proc_nz++;
+            }
+            
+            // quick check
+            if (cur_proc_nz != prev_cur_proc_nz + outd) {
+                SETERRQ3(PETSC_ERR_FILE_UNEXPECTED,
+                    "Inconsisted nonzeros listed for row %i; %i != %i (nzcount != outdegree)!\n",
+                    nzi.cur_row(), cur_proc_nz - prev_cur_proc_nz, outd);
+            }
+            
+            cur_balance += wrows + wnnz*outd;
+            cur_proc_m += 1;
+            // cur_proc_nz was updated while copying the data
+            
+            if (cur_balance >= average_balance) {
+                //
+                // spill the data to the cur_proc
+                //
+                
+                if (cur_proc == 0) {
+                    // capture variables
+                    m = cur_proc_m;
+                    local_nz = cur_proc_nz;
+                    // allocate memory
+                    PetscMalloc(sizeof(PetscInt)*(m+1), &local_rowptr);
+                    PetscMalloc(sizeof(PetscInt)*local_nz, &local_cols);
+                    PetscMalloc(sizeof(PetscScalar)*local_nz, &local_vals);
+                    // copy data
+                    memcpy(local_rowptr,&rowptr[0],sizeof(PetscInt)*m);
+                    memcpy(local_cols,&cols[0],sizeof(PetscInt)*local_nz);
+                }
+                else {
+                    PetscMPIInt message[2] = { cur_proc_m, cur_proc_nz };
+                    PetscInfo3(PETSC_NULL, " sending data (%i,%i) to proc %i\n",
+                         cur_proc_m, cur_proc_nz, cur_proc);
+                    ierr=MPI_Send(&message,2,MPI_INT,cur_proc,tag,comm);CHKERRQ(ierr);
+                    ierr=MPI_Send(&rowptr[0],cur_proc_m,MPI_INT,cur_proc,tag,comm);CHKERRQ(ierr);
+                    ierr=MPI_Send(&cols[0],cur_proc_nz,MPI_INT,cur_proc,tag,comm);CHKERRQ(ierr);
+                }
+                
+                cur_proc++;
+                cur_proc_m = 0;
+                cur_proc_nz = 0;
+                cur_balance = 0;
+            }
+        }
+        
+        if (cur_proc != size)
+        {
+            // we did not use all the processors
+            if (cur_proc == size-1) {
+                // we are off by only one processor, so just send it all the leftovers
+                PetscMPIInt message[2] = { cur_proc_m, cur_proc_nz };
+                PetscInfo3(PETSC_NULL, " sending data (%i,%i) to proc %i\n",
+                    cur_proc_m, cur_proc_nz, cur_proc);
+                ierr=MPI_Send(&message,2,MPI_INT,cur_proc,tag,comm);CHKERRQ(ierr);
+                ierr=MPI_Send(&rowptr[0],cur_proc_m,MPI_INT,cur_proc,tag,comm);CHKERRQ(ierr);
+                ierr=MPI_Send(&cols[0],cur_proc_nz,MPI_INT,cur_proc,tag,comm);CHKERRQ(ierr);
+                cur_proc++;
+            }
+            else {
+                // not yet implemented
+            }
+        }
+        
+        if (cur_proc != size) {
+            SETERRQ(PETSC_ERR_FILE_UNEXPECTED,
+                "Unknown error while distributing rows of the matrix.")
+        }
+    }
+    else
+    {
+        PetscMPIInt message[2] = {0};
+        // receive m, the number of rows
+        // receive local_nz, the local nz count
+        ierr=MPI_Recv(&message,2,MPI_INT,0,tag,comm,&status);CHKERRQ(ierr);
+        m = message[0];
+        local_nz = message[1];
+        // allocate memory
+        PetscMalloc(sizeof(PetscInt)*(m+1), &local_rowptr);
+        PetscMalloc(sizeof(PetscInt)*local_nz, &local_cols);
+        PetscMalloc(sizeof(PetscScalar)*local_nz, &local_vals);
+        
+        // receive the rows array
+        // receive the cols array
+        ierr=MPI_Recv(&local_rowptr,m,MPI_INT,0,tag,comm,&status);CHKERRQ(ierr);
+        ierr=MPI_Recv(&local_cols,local_nz,MPI_INT,0,tag,comm,&status);CHKERRQ(ierr);
+    }
+    
+    PetscInfo(PETSC_NULL, " done with data transfer!\n");
+    
+    // get the total matrix size
+    {
+        int message[2] = { M, N };
+        ierr=MPI_Bcast(&message,2,MPI_INT,0,comm); CHKERRQ(ierr);
+    }
+    
+    // post processing of the received data
+    {
+        //
+        // partial sum the rows array
+        //
+        
+        // the data in the local_rowptr is the outdegree
+        // of each row.
+        {
+            PetscInt partial_sum = 0;
+            for (PetscInt i=0;i<m;i++) {
+                PetscInt tmp = local_rowptr[i];
+                local_rowptr[i] = partial_sum;
+                partial_sum += tmp;
+            }
+            local_rowptr[m] = partial_sum;
+        }
+        
+        // quick check
+        if (local_rowptr[m] != local_nz) {
+            SETERRQ3(PETSC_ERR_FILE_UNEXPECTED,
+                " processor %i received %i nonzeros, but the sum of outdegrees is %i\n",
+                rank, local_nz, local_rowptr[m]);
+        }
+        
+        // initialize the vals array to 1
+        for (PetscInt i=0;i<local_nz;i++) {
+            local_vals[i] = 1.0;
+        }
+    }
+    
+    // we now have all data on the processor in CSR format.
+    
+    // set the number of columns
+    n = m;
+  
+    // create the matrix itself 
+    MatCreate(comm,newmat);
+    MatSetSizes(*newmat,m,n,M,N);
+    if (size > 1) {
+        MatSetType(*newmat,MATMPIAIJ);
+        MatMPIAIJSetPreallocationCSR(*newmat,local_rowptr,local_cols,local_vals);
+    }
+    else {
+        MatSetType(*newmat,MATSEQAIJ);
+        MatSeqAIJSetPreallocationCSR(*newmat,local_rowptr,local_cols,local_vals);
+    }
+    
+    ierr=PetscFree(local_cols);
+    ierr=PetscFree(local_vals);
+    ierr=PetscFree(local_rowptr);
+    
+    PetscCommDestroy(&comm);
+        
+    return (MPI_SUCCESS);
+} 
+
 /**
  * Compute a new distribution of rows to locally optimize wrows*M + wnnz*NNZ
  * 
@@ -767,7 +1058,7 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
  * 
  * 
  */
- #undef __FUNCT__
+#undef __FUNCT__
 #define __FUNCT__ "RedistributeRows"
 PetscErrorCode RedistributeRows(MPI_Comm comm,
         PetscInt M, PetscInt m,

@@ -26,7 +26,7 @@ const static int version_minor = 0;
 PetscErrorCode WriteHeader();
 PetscErrorCode WriteSimpleMatrixStats(const char* filename, Mat A);
 PetscErrorCode ComputePageRank(Mat A);
-
+PetscErrorCode MatLoadPickType(MPI_Comm comm, const char* filename, Mat *a, const char* filetypehint);
 
 static char help[] = 
 "usage: ppagerank -m <filename> [options]\n"
@@ -109,7 +109,9 @@ int main(int argc, char **argv)
     WriteHeader();
     
     Mat A;
-    ierr=MatLoadBSMAT(PETSC_COMM_WORLD,matrix_filename,&A);CHKERRQ(ierr);
+    //ierr=MatLoadBSMAT(PETSC_COMM_WORLD,matrix_filename,&A);CHKERRQ(ierr);
+    //ierr=MatLoadBVGraph(PETSC_COMM_WORLD,matrix_filename,&A);CHKERRQ(ierr);
+    ierr=MatLoadPickType(PETSC_COMM_WORLD,matrix_filename,&A,NULL);CHKERRQ(ierr);
     
     WriteSimpleMatrixStats(matrix_filename, A);
     
@@ -499,6 +501,19 @@ PetscErrorCode MatNormalizeForPageRank(Mat A,PetscTruth trans,Vec *d)
     return (MPI_SUCCESS);
 }
 
-
-
+/**
+ * Load a matrix file and determine the type from the extension
+ * and possibly the filetype hint.
+ * 
+ * @param comm the MPI communicator
+ * @param filename the matrix filename
+ * @param A the future matrix
+ * @param filetypehint the hint about the filetype
+ */
+#undef __FUNCT__
+#define __FUNCT__ "MatLoadPickType"  
+PetscErrorCode MatLoadPickType(MPI_Comm comm, const char* filename, Mat *A, const char* filetypehint)
+{
+    return MatLoadBVGraph(PETSC_COMM_WORLD,filename,A);
+}
 
