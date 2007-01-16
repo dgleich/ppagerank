@@ -25,12 +25,10 @@
 
 #include <vector>
 
-
 PetscErrorCode RedistributeRows(MPI_Comm comm,
         PetscInt M, PetscInt m, 
         PetscInt* rowners,
         PetscInt* ourlens);
-
 
 /**
  * Compute the number of nonzeros in a matrix.
@@ -593,10 +591,12 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
             }
 
             // send data on how much data will be sent around
+            PetscInfo1(PETSC_NULL," scattering counts to processors (round %i) ...\n", send_rounds);
             ierr=MPI_Scatter(sendcounts,1,MPIU_INT,&sendcounts[rank],1,MPIU_INT,0,comm);
                 CHKERRQ(ierr);
                 
             // now send
+            PetscInfo1(PETSC_NULL," scattering data to processors (round %i) ...\n", send_rounds);
             MPI_Scatterv(root_nz_buf_i,sendcounts,displacements,MPI_INT,
                 &local_nz_i[cur_nz],local_nz - cur_nz,MPI_INT,
                 0,comm);
@@ -625,8 +625,10 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
         PetscInt cur_nz=0;
         while (send_rounds > 0) {
             // get data on how much data will be sent around
+            PetscInfo1(PETSC_NULL," scattering counts from root (round %i) ...\n", send_rounds);	
             ierr=MPI_Scatter(sendcounts,1,MPIU_INT,&sendcounts[rank],1,MPIU_INT,0,comm);
                 CHKERRQ(ierr);
+            PetscInfo1(PETSC_NULL," scattering data from root (round %i) ...\n", send_rounds);	
             MPI_Scatterv(PETSC_NULL,sendcounts,displacements,MPI_INT,
                 &local_nz_i[cur_nz],local_nz - cur_nz,MPI_INT,
                 0,comm);
@@ -646,8 +648,6 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
                 rank, cur_nz, local_nz);
         }
     }
-    
-    
     
     //
     // now, each processor has the set of non-zeros it will 
@@ -686,6 +686,20 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
     ierr=PetscFree(local_nz_i);
     ierr=PetscFree(local_nz_j);
     ierr=PetscFree(local_nz_v);
+
+    // Petsc requires the data to be sorted
+    PetscTruth skip_sort_columns=PETSC_FALSE;
+    
+    PetscOptionsHasName(PETSC_NULL, "-matload_no_col_sort",&skip_sort_columns); 
+    if (!skip_sort_columns) 
+    {
+        PetscInfo(PETSC_NULL," sorting columns.\n");
+        for (PetscInt i=0; i < m; i++) {
+            ierr=PetscSortIntWithScalarArray(offlens[i+1]-offlens[i],
+                     &local_cols[offlens[i]], &local_vals[offlens[i]]);
+                CHKERRQ(ierr);
+        }
+    }
     
     // we now have all data on the processor in CSR format.
     
@@ -699,6 +713,8 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
     else {
         n = N/size + ((N % size) > rank);
     }
+
+    PetscInfo(PETSC_NULL," assembling matrix.\n");
     
     MatCreate(comm,newmat);
     MatSetSizes(*newmat,m,n,M,N);
@@ -851,7 +867,7 @@ PetscErrorCode RedistributeRows(MPI_Comm comm,
                 newrowners[cur_proc+1] = i+1;
                 
                 PetscInfo6(PETSC_NULL," proc %3i, %i -> %i, rows=%lli; nz=%lli; balance=%lli\n",
-                    cur_proc,rowners[cur_proc],rowners[cur_proc+1],
+                    cur_proc,newrowners[cur_proc],newrowners[cur_proc+1],
                     cur_proc_nr, cur_proc_nnz,
                     cur_proc_nr*wrows + cur_proc_nnz*wnnz); 
                 

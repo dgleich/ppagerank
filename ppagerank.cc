@@ -205,16 +205,27 @@ PetscErrorCode WriteSimpleMatrixStats(const char* filename, Mat A)
     
     ierr=MPI_Reduce(&local_nz,&max_local_nz,1,MPI_INT,MPI_MAX,0,comm);CHKERRQ(ierr);
     ierr=MPI_Reduce(&local_nz,&min_local_nz,1,MPI_INT,MPI_MIN,0,comm);CHKERRQ(ierr);
-    
-    
-    PetscPrintf(comm,"matrix %s\n", filename);
-    PetscPrintf(comm,"rows       = %10i\n", m);
-    PetscPrintf(comm,"columns    = %10i\n", n);
-    PetscPrintf(comm,"nnz        = %10lli\n", total_nz);
-    PetscPrintf(comm,"local rows = (%10i,%10i)\n", min_local_rows, max_local_rows);
-    PetscPrintf(comm,"local cols = (%10i,%10i)\n", min_local_columns, max_local_columns);
-    PetscPrintf(comm,"local nzs  = (%10i,%10i)\n", min_local_nz, max_local_nz);
-    
+
+    PetscScalar mat_norm_1,mat_norm_inf;
+    ierr=MatNorm(A,NORM_1,&mat_norm_1);CHKERRQ(ierr);
+    ierr=MatNorm(A,NORM_INFINITY,&mat_norm_inf);CHKERRQ(ierr);
+
+    PetscPrintf(comm,"\n");
+    PetscPrintf(comm,"-----------------------------------------\n");        
+    PetscPrintf(comm,"matrix statistics\n");
+    PetscPrintf(comm,"-----------------------------------------\n");
+    PetscPrintf(comm,"rows       =  %10i\n", m);
+    PetscPrintf(comm,"columns    =  %10i\n", n);
+    PetscPrintf(comm,"nnz        =  %10lli\n", total_nz);
+    PetscPrintf(comm,"1-norm     =  %10g\n", mat_norm_1);
+    PetscPrintf(comm,"inf-norm   =  %10g\n", mat_norm_inf);
+    PetscPrintf(comm,"\n");
+    PetscPrintf(comm,"              %10s  %10s\n", "min", "max");
+    PetscPrintf(comm,"local rows =  %10i  %10i\n", min_local_rows, max_local_rows);
+    PetscPrintf(comm,"local cols =  %10i  %10i\n", min_local_columns, max_local_columns);
+    PetscPrintf(comm,"local nzs  =  %10i  %10i\n", min_local_nz, max_local_nz);  
+    PetscPrintf(comm,"-----------------------------------------\n");
+    PetscPrintf(comm,"\n");    
     return (MPI_SUCCESS);
 }
 
@@ -418,6 +429,12 @@ PetscErrorCode MatNormalizeForPageRank(Mat A,PetscTruth trans,Vec *d)
         
         ierr=VecDestroy(col_align_vec);CHKERRQ(ierr);
         ierr=VecDestroy(row_align_vec);CHKERRQ(ierr);
+
+        // TODO fix PETSC_COMM_WORLD
+	PetscPrintf(PETSC_COMM_WORLD,"\n");
+        PetscPrintf(PETSC_COMM_WORLD,"** WARNING **\n");
+        PetscPrintf(PETSC_COMM_WORLD,"Untested code path: %s, line %i.\n", __FILE__, __LINE__);
+        PetscPrintf(PETSC_COMM_WORLD,"\n");
     }
     else
     {
@@ -455,8 +472,7 @@ PetscErrorCode MatNormalizeForPageRank(Mat A,PetscTruth trans,Vec *d)
                 if (d_entry == 0.0 && PetscAbsScalar(vals[j]) > 1e-16) {
                     d_entry = 1.0;
                 }
-                sum += vals[i];
-                
+                sum += vals[j];
             }
             ierr=MatRestoreRow(A,i,&ncols,PETSC_NULL,&vals);CHKERRQ(ierr);
             
