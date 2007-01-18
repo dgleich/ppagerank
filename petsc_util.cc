@@ -1011,13 +1011,16 @@ PetscErrorCode MatLoadBVGraph(MPI_Comm comm_in,const char* filename, Mat *newmat
             local_vals[i] = 1.0;
         }
     }
-
-    PetscInfo5(PETSC_NULL," assembling matrix (M=%i;N=%i;m=%i;n=%i;local_nz=%i).\n", M, N, m, n, local_nz);
-    
-    // we now have all data on the processor in CSR format.
     
     // set the number of columns
     n = m;
+
+    PetscInfo5(PETSC_NULL," assembling matrix (M=%i;N=%i;m=%i;n=%i;local_nz=%i).\n", M, N, m, n, local_nz);
+   
+    // 
+    // we now have all data on the processor in CSR format.
+    //
+    
   
     // create the matrix itself 
     MatCreate(comm,newmat);
