@@ -1264,6 +1264,7 @@ PetscErrorCode VecNonzeroInv(Vec v)
         }
     }
     ierr=VecRestoreArray(v,&x);CHKERRQ(ierr);
+    PetscLogFlops(n);
     return (MPI_SUCCESS);
 }
 
@@ -1311,6 +1312,7 @@ PetscErrorCode VecNonzeroIndicator(Vec v)
         }
     }
     ierr=VecRestoreArray(v,&x);CHKERRQ(ierr);
+    PetscLogFlops(n);
     return (MPI_SUCCESS);
 }
 

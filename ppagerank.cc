@@ -16,10 +16,17 @@
 
 #include "petsc_util.h"
 
-
+#include <string>
+#include <util/string.h>
+#include <util/file.h>
 
 const static int version_major = 0;
 const static int version_minor = 0;
+
+int STAGE_LOAD;
+int STAGE_COMPUTE;
+int STAGE_EVALUATE;
+int STAGE_OUTPUT;
 
 // function prototypes
 
@@ -27,6 +34,8 @@ PetscErrorCode WriteHeader();
 PetscErrorCode WriteSimpleMatrixStats(const char* filename, Mat A);
 PetscErrorCode ComputePageRank(Mat A);
 PetscErrorCode MatLoadPickType(MPI_Comm comm, const char* filename, Mat *a, const char* filetypehint);
+
+void RegisterStages(void);
 
 static char help[] = 
 "usage: ppagerank -m <filename> [options]\n"
@@ -99,19 +108,25 @@ int main(int argc, char **argv)
         return (-1);
     }
     
+    char matrix_filetype_hint[PETSC_MAX_PATH_LEN] = {};
+    ierr=PetscOptionsGetString(PETSC_NULL,"-mhint",matrix_filetype_hint,PETSC_MAX_PATH_LEN,&option_flag);
+        CHKERRQ(ierr);
+    
+    
     PetscTruth script;
     ierr=PetscOptionsHasName(PETSC_NULL,"-script",&script);
     
     //
     // end options parsing
     //
-       
+      
+    RegisterStages(); 
     WriteHeader();
     
+    PetscLogStagePush(STAGE_LOAD);
     Mat A;
-    //ierr=MatLoadBSMAT(PETSC_COMM_WORLD,matrix_filename,&A);CHKERRQ(ierr);
-    //ierr=MatLoadBVGraph(PETSC_COMM_WORLD,matrix_filename,&A);CHKERRQ(ierr);
-    ierr=MatLoadPickType(PETSC_COMM_WORLD,matrix_filename,&A,NULL);CHKERRQ(ierr);
+    ierr=MatLoadPickType(PETSC_COMM_WORLD,matrix_filename,&A,matrix_filetype_hint);CHKERRQ(ierr);
+    PetscLogStagePop();
     
     WriteSimpleMatrixStats(matrix_filename, A);
     
@@ -320,15 +335,15 @@ PetscErrorCode ComputePageRank(Mat A)
     PetscScalar tol = 1e-7;
     
     PetscPrintf(comm,"Computing PageRank...\n");
-    PetscPrintf(comm,"alg = power\n");
-    PetscPrintf(comm,"alpha = %f\n", alpha);
-    PetscPrintf(comm,"maxiter = %i\n", maxiter);
+    PetscPrintf(comm,"alg         = power\n");
+    PetscPrintf(comm,"alpha       = %f\n", alpha);
+    PetscPrintf(comm,"maxiter     = %i\n", maxiter);
     PetscPrintf(comm,"tol = %e\n", tol);
     PetscScalar mat_norm_1,mat_norm_inf;
     ierr=MatNorm(A,NORM_1,&mat_norm_1);CHKERRQ(ierr);
     ierr=MatNorm(A,NORM_INFINITY,&mat_norm_inf);CHKERRQ(ierr);
-    PetscPrintf(comm,"||P||_1 = %f\n",mat_norm_1);
-    PetscPrintf(comm,"||P||_inf = %f\n", mat_norm_inf);
+    PetscPrintf(comm,"||P||_1     = %g\n",mat_norm_1);
+    PetscPrintf(comm,"||P||_inf   = %g\n", mat_norm_inf);
 
     // note that we don't need to worry about the orientation of the matrix 
     // because it is square by assumption so the column vectors are row 
@@ -341,6 +356,8 @@ PetscErrorCode ComputePageRank(Mat A)
     } else {
         ierr=VecCopy(v,x);CHKERRQ(ierr);
     }
+    
+    PetscLogStagePush(STAGE_COMPUTE);
     
     for (PetscInt iter = 0; iter < maxiter; iter++) 
     {
@@ -362,16 +379,19 @@ PetscErrorCode ComputePageRank(Mat A)
            
         PetscScalar delta;
         // compute x = y - x
+        PetscLogStagePush(STAGE_EVALUATE);
         ierr=VecAYPX(x,-1.0,y);CHKERRQ(ierr);
         ierr=VecNorm(x,NORM_1,&delta);CHKERRQ(ierr);
-        
         PetscPrintf(comm,"%4i  %10.3e\n", iter+1, delta);
+        PetscLogStagePop();
         
         if (delta < tol) {
             break;
         }
         ierr=VecCopy(y,x);CHKERRQ(ierr);
     }
+    
+    PetscLogStagePop();
     
     return (MPI_SUCCESS);
 }
@@ -484,6 +504,8 @@ PetscErrorCode MatNormalizeForPageRank(Mat A,PetscTruth trans,Vec *d)
             } else {
                 row_sums_data[local_i] = 0.0;
             }
+            
+            PetscLogFlops(ncols+1);
         }
         
         // restore the data backing all the vectors  
@@ -514,6 +536,85 @@ PetscErrorCode MatNormalizeForPageRank(Mat A,PetscTruth trans,Vec *d)
 #define __FUNCT__ "MatLoadPickType"  
 PetscErrorCode MatLoadPickType(MPI_Comm comm, const char* filename, Mat *A, const char* filetypehint)
 {
-    return MatLoadBVGraph(PETSC_COMM_WORLD,filename,A);
+    bool hinted = false;
+    {
+        size_t len;
+        PetscStrlen(filetypehint,&len);
+        hinted = len > 0;
+    }
+    if (hinted)
+    {
+        PetscTruth flg;
+        PetscStrncmp(filetypehint,"bsmat",PETSC_MAX_PATH_LEN,&flg);
+        if (flg) {
+            return MatLoadBSMAT(comm,filename,A);
+        }
+        
+        PetscStrncmp(filetypehint,"bvgraph",PETSC_MAX_PATH_LEN,&flg);
+        if (flg) {
+            return MatLoadBVGraph(comm,filename,A);
+        }
+        
+        PetscStrncmp(filetypehint,"cluto",PETSC_MAX_PATH_LEN,&flg);
+        if (flg) {
+        }
+        
+        PetscStrncmp(filetypehint,"smat",PETSC_MAX_PATH_LEN,&flg);
+        if (flg) {
+        }
+        
+        PetscStrncmp(filetypehint,"graph",PETSC_MAX_PATH_LEN,&flg);
+        if (flg) {
+        }
+    }
+    
+    // get the extension
+    std::string ext = util::split_filename(std::string(filename)).second;
+    bool gzipped = false;
+    if (ext.compare("gz") == 0) {
+        gzipped = true;
+        std::string no_gz_on_file = util::split_filename(std::string(filename)).first;
+        ext = util::split_filename(no_gz_on_file).second;
+    }
+    
+    if (ext.compare("bsmat") == 0) {
+        return MatLoadBSMAT(comm,filename,A);
+    }
+    else if (ext.compare("smat") == 0) {
+    }
+    else if (ext.compare("graph") == 0) {
+        // now try and determine which type of file it is
+        if (!gzipped) {
+            // a binary non-gzipped file must be a BVGraph
+            util::filetypes ft = util::guess_filetype(filename);
+            if (ft == util::filetype_binary) {
+                return MatLoadBVGraph(comm,filename,A);
+            }
+        } 
+    }
+    
+    if (hinted) { 
+        PetscPrintf(comm,
+        "Your hint, %s, was not used and the matrix time was not obvious\n"
+        "from the file extension.  This either means the hint was misspelled\n"
+        "or support for your matrix type isn't in the program yet.\n",
+        filetypehint);
+    }
+    else {
+        PetscPrintf(comm,
+        "The matrix filename, %s, was not sufficient to determine the\n"
+        "type of file.  Try using -mhint to give a hint about the filetype.\n",
+        filename);
+    }
+    
+    return (MPI_ERR_OTHER);
+}
+
+void RegisterStages(void)
+{
+    PetscLogStageRegister(&STAGE_LOAD,"Load Data");
+    PetscLogStageRegister(&STAGE_COMPUTE,"Compute");
+    PetscLogStageRegister(&STAGE_EVALUATE,"Evaluation");
+    PetscLogStageRegister(&STAGE_OUTPUT,"Output Data");
 }
 
