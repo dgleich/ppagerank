@@ -12,6 +12,8 @@
 
 #include "petsc_util.h"
 
+#include "petscvec.h"
+
 // include to use gzipped files
 #include <zlib.h>
 
@@ -89,8 +91,8 @@ PetscErrorCode MatGetNonzeroCount(Mat A, long long int *nzc, PetscInt *lnzc)
  * @return the result from the final VecCreate call
  */
 #undef __FUNCT__
-#define __FUNCT__ "VecCreateForMat" 
-PetscErrorCode VecCreateForMat(Mat A, Vec *v)
+#define __FUNCT__ "VecCreateForMatMult" 
+PetscErrorCode VecCreateForMatMult(Mat A, Vec *v)
 {
     PetscInt N,n;
     MPI_Comm comm;
@@ -121,8 +123,8 @@ PetscErrorCode VecCreateForMat(Mat A, Vec *v)
  * @return the result from the final VecCreate call
  */
 #undef __FUNCT__
-#define __FUNCT__ "VecCreateForMatTranspose" 
-PetscErrorCode VecCreateForMatTranspose(Mat A, Vec *v)
+#define __FUNCT__ "VecCreateForMatMultTranspose" 
+PetscErrorCode VecCreateForMatMultTranspose(Mat A, Vec *v)
 {
     PetscInt N,n;
     MPI_Comm comm;
@@ -141,6 +143,21 @@ PetscErrorCode VecCreateForMatTranspose(Mat A, Vec *v)
     return (ierr);
 }
 
+/**
+ * A quick wrapper to save writing lots of "if" statements for
+ * matrices that are transposed.
+ * 
+ * @param A the matrix to create the vector for
+ * @param v the output vector
+ * @param trans a flag indicating if the matrix is transposed
+ */
+#undef __FUNCT__
+#define __FUNCT__ "VecCreateForPossiblyTransposedMatrix"
+PetscErrorCode VecCreateForPossiblyTransposedMatrix(Mat A, Vec *v, PetscTruth trans)
+{
+    if (trans) { return VecCreateForMatMultTranspose(A,v); }
+    else { return VecCreateForMatMultTranspose(A,v); }
+}
 
 /**
  * MatLoadBSMAT loads a binary sparse matrix to a distributed memory
@@ -1243,6 +1260,82 @@ PetscErrorCode RedistributeRows(MPI_Comm comm,
     return (MPI_SUCCESS);
 }
 
+
+
+/**
+ * Checks if a vector is compatible with a matrix for 
+ * matrix-vector multiplication.
+ * 
+ * This function verifies that the local rows of v correspond
+ * with the local columns of A.
+ * 
+ * Not collective.
+ * 
+ * @param A the matrix
+ * @param v a vector.
+ * @param flg set to PETSC_TRUE if the sizes of A and v are compatible
+ * @return any MPI error codes.
+ */
+#undef __FUNCT__
+#define __FUNCT__ "VecCompatibleWithMatMult" 
+PetscErrorCode VecCompatibleWithMatMult(Mat A, Vec v, PetscTruth *flg)
+{
+    PetscErrorCode ierr;
+    if (flg == PETSC_NULL) {
+        return (MPI_SUCCESS);
+    }
+    *flg = PETSC_FALSE;
+    PetscInt Nmat,Nvec;
+    PetscInt nmat,nvec;
+    ierr=MatGetSize(A,PETSC_NULL,&Nmat);CHKERRQ(ierr);
+    ierr=VecGetSize(v,&Nvec);CHKERRQ(ierr);
+    ierr=MatGetLocalSize(A,PETSC_NULL,&nmat);CHKERRQ(ierr);
+    ierr=VecGetLocalSize(v,&nvec);CHKERRQ(ierr);
+    
+    if (Nmat == Nvec && nmat == nvec) { 
+        *flg = PETSC_TRUE;
+    }
+    
+    return (MPI_SUCCESS);
+}
+
+/**
+ * Checks if a vector is compatible with a matrix for 
+ * matrix-transpose multiplication.
+ * 
+ * This function verifies that the local rows of v correspond
+ * with the local rows of A.
+ * 
+ * Not collective.
+ * 
+ * @param A the matrix
+ * @param v a vector.
+ * @param flg set to PETSC_TRUE if the sizes of A and v are compatible
+ * @return any MPI error codes.
+ */
+#undef __FUNCT__
+#define __FUNCT__ "VecCompatibleWithMatMultTranspose" 
+PetscErrorCode VecCompatibleWithMatMultTranspose(Mat A, Vec v, PetscTruth *flg)
+{
+    PetscErrorCode ierr;
+    if (flg == PETSC_NULL) {
+        return (MPI_SUCCESS);
+    }
+    *flg = PETSC_FALSE;
+    PetscInt Mmat,Mvec;
+    PetscInt mmat,mvec;
+    ierr=MatGetSize(A,&Mmat,PETSC_NULL);CHKERRQ(ierr);
+    ierr=VecGetSize(v,&Mvec);CHKERRQ(ierr);
+    ierr=MatGetLocalSize(A,&mmat,PETSC_NULL);CHKERRQ(ierr);
+    ierr=VecGetLocalSize(v,&mvec);CHKERRQ(ierr);
+    
+    if (Mmat == Mvec && mmat == mvec) { 
+        *flg = PETSC_TRUE;
+    }
+    
+    return (MPI_SUCCESS);
+}
+
 /**
  * Compute the inverse of every non-zero entry in the vector.
  * 
@@ -1250,6 +1343,8 @@ PetscErrorCode RedistributeRows(MPI_Comm comm,
  * 
  * @param v the vector
  */
+#undef __FUNCT__
+#define __FUNCT__ "VecNonzeroInv" 
 PetscErrorCode VecNonzeroInv(Vec v)
 {
     PetscErrorCode ierr;
@@ -1264,7 +1359,7 @@ PetscErrorCode VecNonzeroInv(Vec v)
         }
     }
     ierr=VecRestoreArray(v,&x);CHKERRQ(ierr);
-    PetscLogFlops(n);
+    ierr=PetscLogFlops(n);
     return (MPI_SUCCESS);
 }
 
@@ -1276,6 +1371,8 @@ PetscErrorCode VecNonzeroInv(Vec v)
  * @param A the matrix to test
  * @param square a boolean output set to PETSC_TRUE if the matrix is square
  */
+#undef __FUNCT__
+#define __FUNCT__ "MatIsSquare"
 PetscErrorCode MatIsSquare(Mat A, PetscTruth *square)
 {
     PetscErrorCode ierr;
@@ -1295,6 +1392,8 @@ PetscErrorCode MatIsSquare(Mat A, PetscTruth *square)
  * 
  * @param v the vector
  */
+#undef __FUNCT__
+#define __FUNCT__ "VecNonzeroIndicator"
 PetscErrorCode VecNonzeroIndicator(Vec v)
 {
     PetscErrorCode ierr;
@@ -1312,7 +1411,255 @@ PetscErrorCode VecNonzeroIndicator(Vec v)
         }
     }
     ierr=VecRestoreArray(v,&x);CHKERRQ(ierr);
-    PetscLogFlops(n);
+    ierr=PetscLogFlops(n);
+    return (MPI_SUCCESS);
+}
+
+#undef __FUNCT__
+#define __FUNCT__ "MatBuildNonzeroRowIndicator"
+PetscErrorCode MatBuildNonzeroRowIndicator(Mat A, Vec *ind)
+{
+    PetscErrorCode ierr;
+    
+    // check for quick easy exit.
+    if (!ind) {
+        return (MPI_SUCCESS);
+    }
+         
+    
+    PetscTruth flg;
+    ierr=VecValid(*ind,&flg);CHKERRQ(ierr);
+    if (flg) {
+        // check for compatible sizes.
+        ierr=VecCompatibleWithMatMultTranspose(A,*ind,&flg);CHKERRQ(ierr);
+        if (!flg) {
+            SETERRQ(PETSC_ERR_ARG_SIZ,
+                "Incompatibly sized vectors, MatMultTranspose(A,*ind) is invalid.");
+        }
+        // restore the value of flg
+        flg = PETSC_TRUE;
+    }
+    
+    if (!flg) {
+        ierr=VecCreateForMatMultTranspose(A,ind);CHKERRQ(ierr);
+    }
+    
+    // get the ownership range
+    PetscInt Istart, Iend;
+    ierr=MatGetOwnershipRange(A,&Istart, &Iend);CHKERRQ(ierr);
+    
+    PetscScalar *d_data;
+    ierr=VecGetArray(*ind,&d_data);CHKERRQ(ierr);
+  
+    // allocate a variable for the local vector index
+    PetscInt local_i = 0;
+    
+    for (PetscInt i = Istart; i < Iend; ++i, ++local_i) 
+    {
+        PetscInt ncols=0;
+        const PetscScalar *vals;
+        ierr=MatGetRow(A,i,&ncols,PETSC_NULL,&vals);CHKERRQ(ierr);
+        PetscScalar d_entry = 0.0;
+        for (PetscInt j = 0; j < ncols; j++) {
+            // check to see if we should set the entry in d
+            // TODO replace with machine epsilon
+            if (d_entry == 0.0 && PetscAbsScalar(vals[j]) > 1e-16) {
+                d_entry = 1.0;
+            }
+        }
+        ierr=MatRestoreRow(A,i,&ncols,PETSC_NULL,&vals);CHKERRQ(ierr);
+        
+        d_data[local_i] = d_entry; 
+        
+        ierr=PetscLogFlops(ncols+1);
+    }
+    
+    ierr=VecRestoreArray(*ind,&d_data);CHKERRQ(ierr);
+    
+    return (MPI_SUCCESS);
+}
+
+/**
+ * Build an indicator vector to indicate columns of the matrix with
+ * out any non-zeros.
+ * 
+ * Collective on the communicator behind the matrix A.
+ * 
+ * This function allocates one internal temporary vector.
+ * 
+ * @param A the matrix 
+ * @param ind the newly allocated vector for the column.  If 
+ * *ind is a valid vector, then it must be sized according
+ * to the matrix A, otherwise, it will be created.  If ind
+ * is null, this function does nothing.
+ */
+#undef __FUNCT__
+#define __FUNCT__ "MatBuildNonzeroColumnIndicator"
+PetscErrorCode MatBuildNonzeroColumnIndicator(Mat A, Vec *ind)
+{
+    PetscErrorCode ierr;
+    
+    // check for quick easy exit.
+    if (!ind) {
+        return (MPI_SUCCESS);
+    }
+    
+    // check to make sure we can use this matrix type
+    MatType type;
+    ierr=MatGetType(A,&type);CHKERRQ(ierr);
+    if (type != MATSEQAIJ && type != MATMPIAIJ) {
+        SETERRQ1(PETSC_ERR_SUP,
+            "Nonzero Column Indicator is not supported for matrix type %s\n", 
+            type);
+    }
+         
+    
+    PetscTruth flg;
+    ierr=VecValid(*ind,&flg);CHKERRQ(ierr);
+    if (flg) {
+        // check for compatible sizes.
+        ierr=VecCompatibleWithMatMult(A,*ind,&flg);CHKERRQ(ierr);
+        if (!flg) {
+            SETERRQ(PETSC_ERR_ARG_SIZ,
+                "Incompatibly sized vectors, MatMult(A,*ind) is invalid.");
+        }
+        // restore the value of flg
+        flg = PETSC_TRUE;
+    }
+    
+    if (!flg) {
+        ierr=VecCreateForMatMult(A,ind);CHKERRQ(ierr);
+    }
+    
+    // Istart is the matrix start and end row
+    PetscInt Istart, Iend;
+    ierr=MatGetOwnershipRange(A,&Istart, &Iend);CHKERRQ(ierr);
+    
+    // vstart is the vector start and end row, or the
+    // matrix start and end column!
+    PetscInt vstart, vend;
+    ierr=VecGetOwnershipRange(*ind,&vstart,&vend);CHKERRQ(ierr);
+    
+    // set the vector d to o
+    ierr=VecSet(*ind,0.0);CHKERRQ(ierr);
+    
+    PetscScalar *d_data;
+    ierr=VecGetArray(*ind,&d_data);CHKERRQ(ierr);
+    
+    if (type == MATMPIAIJ) 
+    {
+        #if defined (PETSC_USE_CTABLE)
+        PetscTable colmap;
+        #else
+        PetscInt *colmap;
+        #endif
+        Vec lvec;
+        VecScatter scat;
+        
+        // we need the communication structs to do this without
+        // allocating an additional vector.
+        ierr=MatGetCommunicationStructs(A,&lvec,&colmap,&scat);CHKERRQ(ierr);
+        ierr=VecSet(lvec,0.0);CHKERRQ(ierr);
+        
+        PetscScalar *larray;
+        ierr=VecGetArray(lvec,&larray);CHKERRQ(ierr);
+        
+        for (PetscInt i = Istart; i < Iend; ++i) 
+        {
+            PetscInt ncols=0;
+            const PetscScalar *vals;
+            const PetscInt *cols;
+            ierr=MatGetRow(A,i,&ncols,&cols,&vals);CHKERRQ(ierr);
+            for (PetscInt j = 0; j < ncols; j++) {
+                // check to see if we should set the entry in d
+                // TODO replace with machine epsilon
+                if (PetscAbsScalar(vals[j]) > 1e-16) 
+                {
+                    int col = cols[j];
+                    if (vstart <= col && col < vend) {
+                        d_data[col-vstart] = 1.0;
+                    }
+                    else {
+                        int lcol = 0;
+                        #if defined (PETSC_USE_CTABLE)
+                        ierr=PetscTableFind(colmap,col,&lcol);CHKERRQ(ierr);
+                        #else
+                        lcol = colmap[col];
+                        #endif
+                        larray[lcol] = 1.0;
+                    }
+                }
+            }
+            ierr=MatRestoreRow(A,i,&ncols,&cols,&vals);CHKERRQ(ierr);
+            
+            ierr=PetscLogFlops(ncols);
+        }
+        
+        ierr=VecRestoreArray(lvec,&larray);CHKERRQ(ierr);
+        ierr=VecRestoreArray(*ind,&d_data);CHKERRQ(ierr);
+        
+        // now scatter the local on processor data
+        ierr=VecScatterBegin(*ind,lvec,INSERT_VALUES,SCATTER_REVERSE,scat);
+            CHKERRQ(ierr);
+        ierr=VecScatterEnd(*ind,lvec,INSERT_VALUES,SCATTER_REVERSE,scat);
+            CHKERRQ(ierr);
+            
+        // finally, go through the *ind vector and set to 0 or 1
+        ierr=VecNonzeroIndicator(*ind);
+    }
+    else if (type == MATSEQAIJ) 
+    {
+        // in the sequential case, the opereation is simple because
+        // the entire vector is stored on the local processor.
+        for (PetscInt i = Istart; i < Iend; ++i) 
+        {
+            PetscInt ncols=0;
+            const PetscScalar *vals;
+            const PetscInt *cols;
+            ierr=MatGetRow(A,i,&ncols,&cols,&vals);CHKERRQ(ierr);
+            for (PetscInt j = 0; j < ncols; j++) {
+                // check to see if we should set the entry in d
+                // TODO replace with machine epsilon
+                if (PetscAbsScalar(vals[j]) > 1e-16) {
+                    d_data[cols[j]] = 1.0;
+                }
+            }
+            ierr=MatRestoreRow(A,i,&ncols,&cols,&vals);CHKERRQ(ierr);
+            
+            ierr=PetscLogFlops(ncols);
+        }
+        ierr=VecRestoreArray(*ind,&d_data);CHKERRQ(ierr);
+    }
+    
+    
+    return (MPI_SUCCESS);
+}
+
+/**
+ * Compute a synchronized feof command.
+ * 
+ * Collective on MPI_Comm.
+ * 
+ * The file is checked only on the root processor.
+ * 
+ * @param comm the communicator
+ * @param f the file pointer
+ * @param eof the eof indicator from feof
+ * @return err in the case of an MPI error.
+ */
+#undef __FUNCT__
+#define __FUNCT__ "PetscSynchronizedFEof"
+PetscErrorCode PetscSynchronizedFEof(MPI_Comm comm,FILE *f,int *eof)
+{
+    PetscErrorCode ierr;
+    PetscMPIInt rank;
+    ierr=MPI_Comm_rank(comm,&rank);CHKERRQ(ierr);
+    if (!rank) {
+        // only on the root processor
+        *eof = feof(f);
+    }
+    ierr=MPI_Bcast(&eof,1,MPI_INT,0,comm);CHKERRQ(ierr);
+    
     return (MPI_SUCCESS);
 }
 

@@ -27,7 +27,7 @@ all: ppagerank
 # include the petsc makefile information
 include ${PETSC_DIR}/bmake/common/base
 
-PPAGERANK_LOCAL_OBJS = ppagerank.o petsc_util.o bvgraph_matrix.o
+PPAGERANK_LOCAL_OBJS = ppagerank.o ppagerank_main.o petsc_util.o bvgraph_matrix.o
 PPAGERANK_REMOTE_OBJS = $(DGLEICH_DEV_DIR)/c++-util/util/file.o  $(DGLEICH_DEV_DIR)/c++-util/util/string.o
 PPAGERANK_REMOTE_OBJS_LINKFILES = file.o string.o
 PPAGERANK_COMPILE_OBJS = $(PPAGERANK_LOCAL_OBJS) $(PPAGERANK_REMOTE_OBJS)
