@@ -18,7 +18,8 @@
 struct PageRankContext 
 {
     PetscScalar tol;
-    int maxiter;
+    PetscInt maxiter;
+    PetscInt N;
     
     Mat P;
     PetscTruth trans;
@@ -27,6 +28,10 @@ struct PageRankContext
     PetscTruth default_v;
     Vec v;
     Vec d;
+    
+    PetscScalar alpha;
+    
+    MPI_Comm comm;
 };
 
 

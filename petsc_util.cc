@@ -1460,18 +1460,20 @@ PetscErrorCode MatBuildNonzeroRowIndicator(Mat A, Vec *ind)
         const PetscScalar *vals;
         ierr=MatGetRow(A,i,&ncols,PETSC_NULL,&vals);CHKERRQ(ierr);
         PetscScalar d_entry = 0.0;
-        for (PetscInt j = 0; j < ncols; j++) {
+        PetscInt j;
+        for (j = 0; j < ncols; j++) {
             // check to see if we should set the entry in d
             // TODO replace with machine epsilon
             if (d_entry == 0.0 && PetscAbsScalar(vals[j]) > 1e-16) {
                 d_entry = 1.0;
+                break;
             }
         }
         ierr=MatRestoreRow(A,i,&ncols,PETSC_NULL,&vals);CHKERRQ(ierr);
         
         d_data[local_i] = d_entry; 
         
-        ierr=PetscLogFlops(ncols+1);
+        ierr=PetscLogFlops(j);
     }
     
     ierr=VecRestoreArray(*ind,&d_data);CHKERRQ(ierr);

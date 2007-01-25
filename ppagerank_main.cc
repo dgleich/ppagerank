@@ -358,6 +358,9 @@ PetscErrorCode MatLoadPickType(MPI_Comm comm, const char* filename, Mat *A, cons
 PetscErrorCode SetupAndRunComputations(Mat A, PetscTruth script, PetscTruth trans)
 {
     PetscErrorCode ierr;
+    MPI_Comm comm;
+    
+    PetscObjectGetComm((PetscObject)A,&comm);
     
     // grab all the script lines at the start
     std::vector<std::string> script_lines;
@@ -369,19 +372,31 @@ PetscErrorCode SetupAndRunComputations(Mat A, PetscTruth script, PetscTruth tran
         ierr=PetscSynchronizedFEof(PETSC_COMM_WORLD, stdin, &eof);CHKERRQ(ierr);
         while (!eof) {
             // read from stdin
+            memset(line,0,sizeof(options_line_size)*sizeof(char));
             ierr=PetscSynchronizedFGets(PETSC_COMM_WORLD, stdin, 
                 options_line_size, line);
                 CHKERRQ(ierr);
             std::string linestr(line);
             // trim the string
             linestr.erase(0,linestr.find_first_not_of( "\t\n\r"));
-            linestr.erase(linestr.find_last_not_of( "\t\n\r"));
+            linestr.erase(linestr.find_last_not_of( "\t\n\r")+1);
             // only add non-null lines
             if (linestr.size() > 0) {
                 script_lines.push_back(linestr);
             }
             ierr=PetscSynchronizedFEof(PETSC_COMM_WORLD, stdin, &eof);CHKERRQ(ierr);
         }
+        
+        PetscPrintf(comm,"\n");
+        PetscPrintf(comm,"-----------------------------------------\n");        
+        PetscPrintf(comm,"script options\n");
+        PetscPrintf(comm,"-----------------------------------------\n");
+        PetscPrintf(comm,"\n");
+        for(unsigned int runindex = 0; runindex < script_lines.size(); ++runindex) {
+            PetscPrintf(comm,"[%3i] %s\n", runindex+1, script_lines[runindex].c_str());
+        }
+        PetscPrintf(comm,"-----------------------------------------\n");
+        PetscPrintf(comm,"\n");
     }
     
     
@@ -440,5 +455,7 @@ PetscErrorCode SetupAndRunComputations(Mat A, PetscTruth script, PetscTruth tran
     } else {
         ierr=ComputePageRank(A,trans); CHKERRQ(ierr);
     }
+    
+    return (MPI_SUCCESS);
 }
 
