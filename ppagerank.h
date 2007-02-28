@@ -30,6 +30,11 @@ struct PageRankContext
     Vec d;
     
     PetscScalar alpha;
+
+    PetscScalar inout_beta;
+    PetscScalar inout_eta;
+
+    PetscInt arnoldi_k;
     
     MPI_Comm comm;
 };
@@ -40,5 +45,6 @@ PetscErrorCode ComputePageRank(Mat P, PetscTruth trans);
 PetscErrorCode ComputePageRank_AlgPower(PageRankContext prc);
 PetscErrorCode ComputePageRank_AlgLinsys(PageRankContext prc);
 PetscErrorCode ComputePageRank_AlgArnoldi(PageRankContext prc);
+PetscErrorCode ComputePageRank_AlgInOut(PageRankContext prc);
 
 #endif /* PPAGERANK_H */
