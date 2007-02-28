@@ -15,6 +15,18 @@
 #include "petsc.h"
 #include "petscmat.h"
 
+EXTERN PetscErrorCode PRANKInitializePackage(const char[]);
+
+#define PRANKPOWER "power"
+#define PRANKARNOLDI "arnoldi"
+#define PRANKLINSYS "linsys"
+
+typedef struct _p_PR* PRANK;
+
+
+// define a series of custom errors
+#define PPAGERANK_ERR_ALG_UNKNOWN   PETSC_ERR_MAX_VALUE+1 /* the alg is not valid */
+
 struct PageRankContext 
 {
     PetscScalar tol;
@@ -41,10 +53,17 @@ struct PageRankContext
 
 
 PetscErrorCode MatNormalizeForPageRank(Mat A,PetscTruth trans,Vec *d);
-PetscErrorCode ComputePageRank(Mat P, PetscTruth trans);
-PetscErrorCode ComputePageRank_AlgPower(PageRankContext prc);
-PetscErrorCode ComputePageRank_AlgLinsys(PageRankContext prc);
-PetscErrorCode ComputePageRank_AlgArnoldi(PageRankContext prc);
-PetscErrorCode ComputePageRank_AlgInOut(PageRankContext prc);
+PetscErrorCode ComputePageRank(Mat P, PetscTruth trans, Vec p);
+PetscErrorCode ComputePageRank_AlgPower(PageRankContext prc,Vec p);
+PetscErrorCode ComputePageRank_AlgLinsys(PageRankContext prc,Vec p);
+PetscErrorCode ComputePageRank_AlgArnoldi(PageRankContext prc,Vec p);
+PetscErrorCode ComputePageRank_AlgInOut(PageRankContext prc,Vec p);
+
+extern int PR_COOKIE;
+extern int PR_Solve;
+extern int PR_Setup;
+
+PetscErrorCode PageRankInitializePackage();
+
 
 #endif /* PPAGERANK_H */

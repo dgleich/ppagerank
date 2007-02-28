@@ -15,7 +15,20 @@
 
 #include "petscblaslapack.h"
 
+#include <petscsys.h>
 #include <string.h>
+
+
+PetscErrorCode PageRankInitializePackage()
+{
+    static PetscTruth initialized = PETSC_FALSE;
+    //PetscErrorCode ierr;
+    
+    PetscFunctionBegin;
+    if (initialized) { PetscFunctionReturn(0); }
+    
+    PetscFunctionReturn(0);
+}
 
 PetscErrorCode PageRankMult(PageRankContext prc, Vec x, Vec y);
 
@@ -27,15 +40,19 @@ PetscErrorCode PageRankMult(PageRankContext prc, Vec x, Vec y);
  * 
  * @param P the matrix used for PageRank
  * @param trans true if the matrix is transposed
+ * @param x the output vector x
  * @return MPI_SUCCESS unless there was an error.
  */
 #undef __FUNCT__
 #define __FUNCT__ "ComputePageRank"
-PetscErrorCode ComputePageRank(Mat P, PetscTruth trans)
+PetscErrorCode ComputePageRank(Mat P, PetscTruth trans, Vec x)
 {
     PetscErrorCode ierr;
     PetscTruth flag;
     MPI_Comm comm;
+    
+    PetscFunctionBegin;
+    
     ierr=PetscObjectGetComm((PetscObject)P,&comm); CHKERRQ(ierr);
     
     PetscInt M,N;
@@ -63,7 +80,12 @@ PetscErrorCode ComputePageRank(Mat P, PetscTruth trans)
     ierr=PetscOptionsGetString(PETSC_NULL,"-alg",algname,PETSC_MAX_PATH_LEN,&flag);
         CHKERRQ(ierr);
         
-    PetscTruth require_d = PETSC_FALSE;
+    // quick implementation of the power method    
+    PetscInt maxiter = 10000;
+    ierr=PetscOptionsGetInt(PETSC_NULL,"-maxiter",&maxiter,&flag);CHKERRQ(ierr);
+    
+    PetscScalar tol=1e-7;
+    ierr=PetscOptionsGetScalar(PETSC_NULL,"-tol",&tol,&flag);CHKERRQ(ierr);
     
     Vec v;
     if (!default_v) 
@@ -82,12 +104,8 @@ PetscErrorCode ComputePageRank(Mat P, PetscTruth trans)
     
     // TODO Check v for a probability distribution
     
-    // quick implementation of the power method    
-    PetscInt maxiter = 10000;
-    PetscScalar tol = 1e-7;
-    
     PetscPrintf(comm,"Computing PageRank...\n");
-    PetscPrintf(comm,"alg         = power\n");
+    PetscPrintf(comm,"alg         = %s\n", algname);
     PetscPrintf(comm,"alpha       = %f\n", alpha);
     PetscPrintf(comm,"maxiter     = %i\n", maxiter);
     PetscPrintf(comm,"tol         = %g\n", tol);
@@ -109,21 +127,22 @@ PetscErrorCode ComputePageRank(Mat P, PetscTruth trans)
     prc.comm = comm;
     
     if (strcmp(algname,"arnoldi") == 0) {
-        ierr = ComputePageRank_AlgArnoldi(prc); CHKERRQ(ierr);
-        return (MPI_SUCCESS);
+        ierr = ComputePageRank_AlgArnoldi(prc,x); CHKERRQ(ierr);
     } else if (strcmp(algname,"power") == 0) {
         // run a quick implementation of the power method
-        ierr = ComputePageRank_AlgPower(prc); CHKERRQ(ierr);
-        return (MPI_SUCCESS);
+        ierr = ComputePageRank_AlgPower(prc,x); CHKERRQ(ierr);
+    } else if (strcmp(algname,"linsys") == 0) {
+        //ierr = ComputePageRank_AlgLinsys(prc,x); CHKERRQ(ierr);
     } else if (strcmp(algname,"inout") == 0) {
         // run a quick implementation of the inner/outer iteration
-        ierr=ComputePageRank_AlgInOut(prc); CHKERRQ(ierr);
-        return (MPI_SUCCESS);
+        ierr=ComputePageRank_AlgInOut(prc,x); CHKERRQ(ierr);
+    } else {
+        SETERRQ1(PETSC_ERR_SUP,"Unknown algorithm: %s.", algname);
     }
 
 
     
-    return (MPI_SUCCESS);
+    PetscFunctionReturn(0);
 }
 
 /**
@@ -255,15 +274,18 @@ PetscErrorCode MatNormalizeForPageRank(Mat A,PetscTruth trans,Vec *d)
 
 #undef __FUNCT__
 #define __FUNCT__ "ComputePageRank_AlgPower"
-PetscErrorCode ComputePageRank_AlgPower(PageRankContext prc)
+PetscErrorCode ComputePageRank_AlgPower(PageRankContext prc,Vec p)
 {
     PetscErrorCode ierr;
+    
+    // TODO add code to check the vector p 
+    // to make sure it is a valid Pagerank vector.
     
     // note that we don't need to worry about the orientation of the matrix 
     // because it is square by assumption so the column vectors are row 
     // vectors.
-    Vec x, y;
-    ierr=VecCreateForMatMult(prc.P,&x);CHKERRQ(ierr);
+    Vec x = p;
+    Vec y;
     ierr=VecDuplicate(x,&y);CHKERRQ(ierr);
     if (prc.default_v) {
         ierr=VecSet(x,1.0/(PetscScalar)prc.N);CHKERRQ(ierr);
@@ -305,209 +327,141 @@ PetscErrorCode ComputePageRank_AlgPower(PageRankContext prc)
         ierr=VecCopy(y,x);CHKERRQ(ierr);
     }
     
+    ierr = VecDestroy(y);
+    
     PetscLogStagePop();
+    
+    return (MPI_SUCCESS);
 }
 
 #undef __FUNCT__
 #define __FUNCT__ "ComputePageRank_AlgInOut"
-PetscErrorCode ComputePageRank_AlgInOut(PageRankContext prc)
+PetscErrorCode ComputePageRank_AlgInOut(PageRankContext prc,Vec p)
 {
-  PetscTruth flag;
-  PetscErrorCode ierr;
-
-  PetscScalar beta=prc.alpha/2;
-  ierr=PetscOptionsGetScalar(PETSC_NULL,"-inout_beta",&beta,&flag);CHKERRQ(ierr);
-
-  PetscScalar eta=1e-2;
-  ierr=PetscOptionsGetScalar(PETSC_NULL,"-inout_eta",&eta,&flag);CHKERRQ(ierr);
+    PetscTruth flag;
+    PetscErrorCode ierr;
   
-  PetscInt max_inner_iter = 1000;
-  ierr=PetscOptionsGetInt(PETSC_NULL,"-inout_max_inner_iter",&max_inner_iter,&flag);
-  CHKERRQ(ierr);
+    PetscScalar beta=prc.alpha/2;
+    ierr=PetscOptionsGetScalar(PETSC_NULL,"-inout_beta",&beta,&flag);CHKERRQ(ierr);
+  
+    PetscScalar eta=1e-2;
+    ierr=PetscOptionsGetScalar(PETSC_NULL,"-inout_eta",&eta,&flag);CHKERRQ(ierr);
+  
+    PetscInt max_inner_iter = 1000;
+    ierr=PetscOptionsGetInt(PETSC_NULL,"-inout_max_inner_iter",&max_inner_iter,&flag);
+        CHKERRQ(ierr);
 
-  // TODO add code to check the vector p
-  // to make sure it is a valid Pagerank vector.
+    // TODO add code to check the vector p
+    // to make sure it is a valid Pagerank vector.
 
-  // note that we don't need to worry about the orientation of the matrix
-  // because it is square by assumption so the column vectors are row
-  // vectors.
-  Vec x, y;
-  ierr=VecCreateForMatMult(prc.P,&x);CHKERRQ(ierr);
-  ierr=VecDuplicate(x,&y);CHKERRQ(ierr);
-  if (prc.default_v) {
-    ierr=VecSet(x,1.0/(PetscScalar)prc.N);CHKERRQ(ierr);
-  } else {
-    ierr=VecCopy(prc.v,x);CHKERRQ(ierr);
-  }
-  Vec inner_rhs;
-  ierr=VecDuplicate(y,&inner_rhs);CHKERRQ(ierr);
+    // note that we don't need to worry about the orientation of the matrix
+    // because it is square by assumption so the column vectors are row
+    // vectors.
+    Vec x = p;
+    Vec y;
+    ierr=VecDuplicate(x,&y);CHKERRQ(ierr);
+    if (prc.default_v) {
+        ierr=VecSet(x,1.0/(PetscScalar)prc.N);CHKERRQ(ierr);
+    } else {
+        ierr=VecCopy(prc.v,x);CHKERRQ(ierr);
+    }
     
-  PetscTruth inner_iteration = PETSC_TRUE;
+    Vec inner_rhs;
+    ierr=VecDuplicate(y,&inner_rhs);CHKERRQ(ierr);
+    
+    PetscTruth inner_iteration = PETSC_TRUE;
 
-  PetscLogStagePush(STAGE_COMPUTE);
-  PetscLogStagePush(STAGE_COMPUTE);
-  if (prc.trans) {
-    ierr=MatMult(prc.P,x,y);CHKERRQ(ierr);
-  } else {
-    ierr=MatMultTranspose(prc.P,x,y);CHKERRQ(ierr);
-  }
-  for (PetscInt iter = 0; iter < prc.maxiter; iter++)
+    PetscLogStagePush(STAGE_COMPUTE);
+    
+    if (prc.trans) {
+        ierr=MatMult(prc.P,x,y);CHKERRQ(ierr);
+    } else {
+        ierr=MatMultTranspose(prc.P,x,y);CHKERRQ(ierr);
+    }
+    
+    
+    for (PetscInt iter = 0; iter < prc.maxiter; iter++)
     {
-      // form the rhs of the inner iteration ((a-b)Px + (1-a)v)   
-      if (inner_iteration) {
-	ierr=VecCopy(y,inner_rhs);
-	ierr=VecScale(inner_rhs,prc.alpha-beta);CHKERRQ(ierr);
-	if (prc.default_v) {
-	  ierr=VecShift(inner_rhs,(1.0-prc.alpha)/(PetscScalar)prc.N);CHKERRQ(ierr);
-	} else {
-	  ierr=VecAXPY(inner_rhs,(1.0-prc.alpha),prc.v);CHKERRQ(ierr);
-	}
-      } else {
-	// just do a power iteration
-	ierr=VecScale(y,prc.alpha);CHKERRQ(ierr);
-	PetscScalar omega;
-	ierr=VecNorm(y,NORM_1,&omega);
-	omega = 1.0 - omega;
-	if (prc.default_v) {
-	  ierr=VecShift(y,omega/(PetscScalar)prc.N);CHKERRQ(ierr);
-	} else {
-	  ierr=VecAXPY(y,omega,prc.v);CHKERRQ(ierr);
-	}
-	ierr=VecCopy(y,x);CHKERRQ(ierr);
-	if (prc.trans) {
-	  ierr=MatMult(prc.P,x,y);CHKERRQ(ierr);
-	} else {
-	  ierr=MatMultTranspose(prc.P,x,y);CHKERRQ(ierr);
-	}
-	// for consistency with the other results
-	ierr=VecScale(x,-1.0);CHKERRQ(ierr);
-      }
+        // form the rhs of the inner iteration ((a-b)Px + (1-a)v)   
+        if (inner_iteration) {
+	       ierr=VecCopy(y,inner_rhs);
+	       ierr=VecScale(inner_rhs,prc.alpha-beta);CHKERRQ(ierr);
+	       if (prc.default_v) {
+	           ierr=VecShift(inner_rhs,(1.0-prc.alpha)/(PetscScalar)prc.N);CHKERRQ(ierr);
+	       } else {
+	           ierr=VecAXPY(inner_rhs,(1.0-prc.alpha),prc.v);CHKERRQ(ierr);
+	       }
+        } else {
+	       // just do a power iteration
+	       ierr=VecScale(y,prc.alpha);CHKERRQ(ierr);
+	       PetscScalar omega;
+	       ierr=VecNorm(y,NORM_1,&omega);
+	       omega = 1.0 - omega;
+	       if (prc.default_v) {
+	           ierr=VecShift(y,omega/(PetscScalar)prc.N);CHKERRQ(ierr);
+	       } else {
+	           ierr=VecAXPY(y,omega,prc.v);CHKERRQ(ierr);
+	       }
+	       ierr=VecCopy(y,x);CHKERRQ(ierr);
+	       if (prc.trans) {
+	           ierr=MatMult(prc.P,x,y);CHKERRQ(ierr);
+	       } else {
+	           ierr=MatMultTranspose(prc.P,x,y);CHKERRQ(ierr);
+	       }
+	       // for consistency with the other results
+	       ierr=VecScale(x,-1.0);CHKERRQ(ierr);
+        }
 
-      // begin the inner iteration
-      for (PetscInt inner_iter=0; inner_iter < max_inner_iter && inner_iteration; inner_iter++) {
-	//ierr=VecScale(y,beta);CHKERRQ(ierr);
-	ierr=VecWAXPY(x,beta,y,inner_rhs);CHKERRQ(ierr);
+        // begin the inner iteration
+        for (PetscInt inner_iter=0; inner_iter < max_inner_iter && inner_iteration; inner_iter++) {
+            //ierr=VecScale(y,beta);CHKERRQ(ierr);
+	       ierr=VecWAXPY(x,beta,y,inner_rhs);CHKERRQ(ierr);
 
-	if (prc.trans) {
-	  ierr=MatMult(prc.P,x,y);CHKERRQ(ierr);
-	} else {
-	  ierr=MatMultTranspose(prc.P,x,y);CHKERRQ(ierr);
-	}
+	       if (prc.trans) {
+	           ierr=MatMult(prc.P,x,y);CHKERRQ(ierr);
+	       } else {
+	           ierr=MatMultTranspose(prc.P,x,y);CHKERRQ(ierr);
+	       }
 	
-	// compute x = y - x
-	PetscScalar delta;
-	PetscLogStagePush(STAGE_EVALUATE);
-	//ierr=VecAYPX(x,-1.0,y);CHKERRQ(ierr);
-	ierr=VecAXPBY(x,beta,-1.0,y);CHKERRQ(ierr);
-	ierr=VecAXPY(x,1.0,inner_rhs);CHKERRQ(ierr);
-	ierr=VecNorm(x,NORM_1,&delta);CHKERRQ(ierr);
-	PetscLogStagePop();
-	if (delta < eta) {
-	  if (inner_iter == 0) { 
-	    inner_iteration = PETSC_FALSE; 
-	  }
-	  // undo the transforms on x
-	  ierr=VecAXPY(x,-1.0,inner_rhs); CHKERRQ(ierr);
-	  ierr=VecAXPY(x,-beta,y); CHKERRQ(ierr);
-	  break;
-	}
-      }
+	       // compute x = y - x
+	       PetscScalar delta;
+	       PetscLogStagePush(STAGE_EVALUATE);
+	       //ierr=VecAYPX(x,-1.0,y);CHKERRQ(ierr);
+	       ierr=VecAXPBY(x,beta,-1.0,y);CHKERRQ(ierr);
+	       ierr=VecAXPY(x,1.0,inner_rhs);CHKERRQ(ierr);
+	       ierr=VecNorm(x,NORM_1,&delta);CHKERRQ(ierr);
+	       PetscLogStagePop();
+	       if (delta < eta) {
+	           if (inner_iter == 0) { 
+	               inner_iteration = PETSC_FALSE; 
+	           }
+	           // undo the transforms on x
+	           ierr=VecAXPY(x,-1.0,inner_rhs); CHKERRQ(ierr);
+	           ierr=VecAXPY(x,-beta,y); CHKERRQ(ierr);
+	           break;
+	       }
+        }
 
-
-      PetscScalar delta;
-      // compute x = cy + v - x
-      PetscLogStagePush(STAGE_EVALUATE);
-      if (prc.default_v) {
-	ierr=VecShift(x,(1-prc.alpha)/(PetscScalar)prc.N);CHKERRQ(ierr);
-      } else {
-	ierr=VecAXPY(x,1-prc.alpha,prc.v);CHKERRQ(ierr);
-      }
-      ierr=VecAXPY(x,prc.alpha,y);CHKERRQ(ierr);
-      ierr=VecNorm(x,NORM_1,&delta);CHKERRQ(ierr);
-
-      PetscPrintf(prc.comm,"%4i  %10.3e %1i\n", iter+1, delta, inner_iteration);
-      PetscLogStagePop();
-
-      if (delta < prc.tol) {
-	break;
-      }
+        PetscScalar delta;
+        // compute x = cy + v - x
+        PetscLogStagePush(STAGE_EVALUATE);
+        if (prc.default_v) {
+            ierr=VecShift(x,(1-prc.alpha)/(PetscScalar)prc.N);CHKERRQ(ierr);
+        } else {
+            ierr=VecAXPY(x,1-prc.alpha,prc.v);CHKERRQ(ierr);
+        }
+        ierr=VecAXPY(x,prc.alpha,y);CHKERRQ(ierr);
+        ierr=VecNorm(x,NORM_1,&delta);CHKERRQ(ierr);
+    
+        PetscPrintf(prc.comm,"%4i  %10.3e %1i\n", iter+1, delta, inner_iteration);
+        PetscLogStagePop();
+    
+        if (delta < prc.tol) {
+    	   break;
+        }
     }
 
-  /*  for (PetscInt iter = 0; iter < prc.maxiter; iter++)
-    {
-      // form the rhs of the inner iteration ((a-b)Px + (1-a)v)   
-      if (prc.trans) {
-	ierr=MatMult(prc.P,x,y);CHKERRQ(ierr);
-      } else {
-	ierr=MatMultTranspose(prc.P,x,y);CHKERRQ(ierr);
-      }
-
-      if (inner_iteration) {
-	ierr=VecScale(x,prc.alpha-beta);CHKERRQ(ierr);
-	if (prc.default_v) {
-	  ierr=VecShift(y,(1.0-prc.alpha)/(PetscScalar)prc.N);CHKERRQ(ierr);
-	} else {
-	  ierr=VecAXPY(y,(1.0-prc.alpha),prc.v);CHKERRQ(ierr);
-	}
-	ierr=VecCopy(x,inner_rhs);CHKERRQ(ierr);
-      } else {
-	// just do a power iteration
-	ierr=VecScale(y,prc.alpha);CHKERRQ(ierr);
-	PetscScalar omega;
-	ierr=VecNorm(y,NORM_1,&omega);
-	omega = 1.0 - omega;
-	if (prc.default_v) {
-	  ierr=VecShift(y,omega/(PetscScalar)prc.N);CHKERRQ(ierr);
-	} else {
-	  ierr=VecAXPY(y,omega,prc.v);CHKERRQ(ierr);
-	}
-      }
-
-      // begin the inner iteration
-      for (PetscInt inner_iter=0; inner_iter < max_inner_iter && inner_iteration; inner_iter++) {
-	if (prc.trans) {
-	  ierr=MatMult(prc.P,x,y);CHKERRQ(ierr);
-	} else {
-	  ierr=MatMultTranspose(prc.P,x,y);CHKERRQ(ierr);
-	}
-	ierr=VecScale(y,beta);CHKERRQ(ierr);
-	ierr=VecAXPY(y,1.0,inner_rhs);CHKERRQ(ierr);
-
-	// compute the difference x-y
-	// compute x = y - x
-	PetscScalar delta;
-	PetscLogStagePush(STAGE_EVALUATE);
-	ierr=VecAYPX(x,-1.0,y);CHKERRQ(ierr);
-	ierr=VecNorm(x,NORM_1,&delta);CHKERRQ(ierr);
-	PetscLogStagePop();
-	if (delta < eta) {
-	  if (inner_iter == 0) { inner_iteration = PETSC_FALSE; }
-	  break;
-	}
-
-	ierr=VecCopy(y,x);CHKERRQ(ierr);
-      }
-
-
-      PetscScalar delta,norm_x,norm_y;
-      // compute x = y/norm_y - x/norm_x
-      PetscLogStagePush(STAGE_EVALUATE);
-      ierr=VecNorm(x,NORM_1,&norm_x); CHKERRQ(ierr);
-      ierr=VecNorm(y,NORM_1,&norm_y); CHKERRQ(ierr);
-      ierr=VecScale(x,1.0/norm_x);CHKERRQ(ierr);
-      ierr=VecAXPY(x,-1.0/norm_y,y);CHKERRQ(ierr);
-      ierr=VecNorm(x,NORM_1,&delta);CHKERRQ(ierr);
-      
-
-      ierr=VecNorm(x,NORM_1,&delta);CHKERRQ(ierr);
-      PetscPrintf(prc.comm,"%4i  %10.3e  %1i\n", iter+1, delta, inner_iteration);
-      PetscLogStagePop();
-
-      if (delta < prc.tol) {
-	break;
-      }
-      ierr=VecCopy(y,x);CHKERRQ(ierr);
-      }*/
+  
 
   ierr = VecDestroy(y);
 
@@ -518,7 +472,7 @@ PetscErrorCode ComputePageRank_AlgInOut(PageRankContext prc)
 
 #undef __FUNCT__
 #define __FUNCT__ "ComputePageRank_AlgArnoldi"
-PetscErrorCode ComputePageRank_AlgArnoldi(PageRankContext prc)
+PetscErrorCode ComputePageRank_AlgArnoldi(PageRankContext prc,Vec p)
 {
     PetscErrorCode ierr;
     
@@ -535,7 +489,7 @@ PetscErrorCode ComputePageRank_AlgArnoldi(PageRankContext prc)
     PetscScalar delta;
     
     Vec *Vs;
-    Vec x;
+    Vec x = p;
     Vec w;
     Vec g;
     
@@ -552,8 +506,6 @@ PetscErrorCode ComputePageRank_AlgArnoldi(PageRankContext prc)
     
     ierr=VecDuplicate(prc.d,&g);CHKERRQ(ierr);
     ierr=VecDuplicate(prc.d,&w);CHKERRQ(ierr);
-    ierr=VecDuplicate(prc.d,&x);CHKERRQ(ierr);
-    
     ierr=VecDuplicateVecs(prc.d,k,&Vs);CHKERRQ(ierr);
     
     PetscLogStagePush(STAGE_COMPUTE);
@@ -626,7 +578,6 @@ PetscErrorCode ComputePageRank_AlgArnoldi(PageRankContext prc)
             int temp_i = 1;
             PetscScalar temp_s = 1.0; 
             
-            
             if (svd_work == PETSC_NULL) {
                 PetscScalar svd_work_len = 0;
                 svd_lwork = -1;
@@ -638,7 +589,6 @@ PetscErrorCode ComputePageRank_AlgArnoldi(PageRankContext prc)
                     CHKERRQ(ierr);
                 svd_lwork = (PetscInt)svd_work_len;
             }
-            
             
             LAPACKgesvd_(&job_u, &job_v, &svd_m, &svd_n, H,
                 &lda, svd_sigmas, &temp_s, &temp_i,
@@ -691,7 +641,6 @@ PetscErrorCode ComputePageRank_AlgArnoldi(PageRankContext prc)
     ierr=VecDestroyVecs(Vs, k);
     ierr=VecDestroy(g);
     ierr=VecDestroy(w);
-    ierr=VecDestroy(x);    
                 
     return (MPI_SUCCESS);
 }

@@ -168,7 +168,7 @@ PetscErrorCode WriteHeader(void)
     
     PetscPrintf(PETSC_COMM_WORLD, "ppagerank %i.%i\n\n", version_major, version_minor);
     PetscPrintf(PETSC_COMM_WORLD, "David Gleich\n");
-    PetscPrintf(PETSC_COMM_WORLD, "Copyright, 2006\n");
+    PetscPrintf(PETSC_COMM_WORLD, "Copyright, 2006-2007\n");
     
     for (int i=0; i<60; i++) { PetscPrintf(PETSC_COMM_WORLD, "%c", '='); }
     PetscPrintf(PETSC_COMM_WORLD, "\n");
@@ -419,6 +419,10 @@ PetscErrorCode SetupAndRunComputations(Mat A, PetscTruth script, PetscTruth tran
         // remove all the options at this point
         PetscOptionsDestroy();
         
+        // allocate a single PageRank vector
+        Vec p;
+        ierr=VecCreateForMatMult(A,&p);CHKERRQ(ierr);
+        
         for(unsigned int runindex = 0; runindex < script_lines.size(); ++runindex) {
              
             // parse to args
@@ -436,7 +440,12 @@ PetscErrorCode SetupAndRunComputations(Mat A, PetscTruth script, PetscTruth tran
             PetscSetProgramName(progname);
             PetscOptionsInsert(&sargc,&sargv,(char*)0);
             
-            ierr=ComputePageRank(A,trans); CHKERRQ(ierr);
+            ierr=ComputePageRank(A,trans,p);
+            
+            if (ierr == PPAGERANK_ERR_ALG_UNKNOWN) {
+                // spew an error, but do not quit!
+                PetscError(__LINE__,__FUNCT__,__FILE__,__SDIR__,ierr,0," ");
+            }
             
             // make sure there are no options left
             PetscOptionsLeft();
@@ -453,7 +462,9 @@ PetscErrorCode SetupAndRunComputations(Mat A, PetscTruth script, PetscTruth tran
         PetscSetProgramName(progname);
         PetscOptionsInsert(&margc, &margv,(char*)0);
     } else {
-        ierr=ComputePageRank(A,trans); CHKERRQ(ierr);
+        Vec p;
+        ierr=VecCreateForMatMult(A,&p);CHKERRQ(ierr);
+        ierr=ComputePageRank(A,trans,p); CHKERRQ(ierr);
     }
     
     return (MPI_SUCCESS);
