@@ -31,6 +31,7 @@ PetscErrorCode PageRankInitializePackage()
 }
 
 PetscErrorCode PageRankMult(PageRankContext prc, Vec x, Vec y);
+PetscErrorCode PageRankDanglingMult(PageRankContext prc, Vec x, Vec y);
 
 /**
  * Compute a PageRank vector for a PETSc Matrix P.
@@ -370,95 +371,122 @@ PetscErrorCode ComputePageRank_AlgInOut(PageRankContext prc,Vec p)
     ierr=VecDuplicate(y,&inner_rhs);CHKERRQ(ierr);
     
     PetscTruth inner_iteration = PETSC_TRUE;
+    PetscScalar delta;
 
     PetscLogStagePush(STAGE_COMPUTE);
     
-    if (prc.trans) {
-        ierr=MatMult(prc.P,x,y);CHKERRQ(ierr);
-    } else {
-        ierr=MatMultTranspose(prc.P,x,y);CHKERRQ(ierr);
-    }
+    ierr=PageRankDanglingMult(prc,x,y);CHKERRQ(ierr);
     
-    
+        
     for (PetscInt iter = 0; iter < prc.maxiter; iter++)
     {
-        // form the rhs of the inner iteration ((a-b)Px + (1-a)v)   
+        if (!inner_iteration) {
+            // just do a power iteration
+            if (prc.trans) {
+                ierr=MatMult(prc.P,x,y);CHKERRQ(ierr);
+            } else {
+                ierr=MatMultTranspose(prc.P,x,y);CHKERRQ(ierr);
+            }
+            // compute y = c*y;
+            ierr=VecScale(y,prc.alpha);CHKERRQ(ierr);
+            PetscScalar omega;
+            ierr=VecNorm(y,NORM_1,&omega);
+            omega = 1.0 - omega;
+            if (prc.default_v) {
+                ierr=VecShift(y,omega/(PetscScalar)prc.N);CHKERRQ(ierr);
+            } else {
+                ierr=VecAXPY(y,omega,prc.v);CHKERRQ(ierr);
+            }
+            
+            PetscLogStagePush(STAGE_EVALUATE);
+            ierr=VecAYPX(x,-1.0,y);CHKERRQ(ierr);
+            ierr=VecNorm(x,NORM_1,&delta);CHKERRQ(ierr);
+            PetscLogStagePop();
+            
+            ierr=VecCopy(y,x);CHKERRQ(ierr);
+        }
         if (inner_iteration) {
-	       ierr=VecCopy(y,inner_rhs);
-	       ierr=VecScale(inner_rhs,prc.alpha-beta);CHKERRQ(ierr);
+            // form the rhs of the inner iteration ((a-b)Px + (1-a)v)
+	       ierr=VecCopy(y,inner_rhs);  // inner_rhs <- y
+	       ierr=VecScale(inner_rhs,prc.alpha-beta);CHKERRQ(ierr); // inner_rhs = (alpha - beta)*y
+           
+           // inner_rhs <- (alpha-beta)*y + (1-alpha)*v
 	       if (prc.default_v) {
 	           ierr=VecShift(inner_rhs,(1.0-prc.alpha)/(PetscScalar)prc.N);CHKERRQ(ierr);
 	       } else {
 	           ierr=VecAXPY(inner_rhs,(1.0-prc.alpha),prc.v);CHKERRQ(ierr);
 	       }
-        } else {
-	       // just do a power iteration
-	       ierr=VecScale(y,prc.alpha);CHKERRQ(ierr);
-	       PetscScalar omega;
-	       ierr=VecNorm(y,NORM_1,&omega);
-	       omega = 1.0 - omega;
-	       if (prc.default_v) {
-	           ierr=VecShift(y,omega/(PetscScalar)prc.N);CHKERRQ(ierr);
-	       } else {
-	           ierr=VecAXPY(y,omega,prc.v);CHKERRQ(ierr);
-	       }
-	       ierr=VecCopy(y,x);CHKERRQ(ierr);
-	       if (prc.trans) {
-	           ierr=MatMult(prc.P,x,y);CHKERRQ(ierr);
-	       } else {
-	           ierr=MatMultTranspose(prc.P,x,y);CHKERRQ(ierr);
-	       }
-	       // for consistency with the other results
-	       ierr=VecScale(x,-1.0);CHKERRQ(ierr);
-        }
-
-        // begin the inner iteration
-        for (PetscInt inner_iter=0; inner_iter < max_inner_iter && inner_iteration; inner_iter++) {
-            //ierr=VecScale(y,beta);CHKERRQ(ierr);
-	       ierr=VecWAXPY(x,beta,y,inner_rhs);CHKERRQ(ierr);
-
-	       if (prc.trans) {
-	           ierr=MatMult(prc.P,x,y);CHKERRQ(ierr);
-	       } else {
-	           ierr=MatMultTranspose(prc.P,x,y);CHKERRQ(ierr);
-	       }
-	
-	       // compute x = y - x
-	       PetscScalar delta;
-	       PetscLogStagePush(STAGE_EVALUATE);
-	       //ierr=VecAYPX(x,-1.0,y);CHKERRQ(ierr);
-	       ierr=VecAXPBY(x,beta,-1.0,y);CHKERRQ(ierr);
-	       ierr=VecAXPY(x,1.0,inner_rhs);CHKERRQ(ierr);
-	       ierr=VecNorm(x,NORM_1,&delta);CHKERRQ(ierr);
-	       PetscLogStagePop();
-	       if (delta < eta) {
-	           if (inner_iter == 0) { 
-	               inner_iteration = PETSC_FALSE; 
-	           }
-	           // undo the transforms on x
-	           ierr=VecAXPY(x,-1.0,inner_rhs); CHKERRQ(ierr);
-	           ierr=VecAXPY(x,-beta,y); CHKERRQ(ierr);
-	           break;
-	       }
-        }
-
-        PetscScalar delta;
-        // compute x = cy + v - x
-        PetscLogStagePush(STAGE_EVALUATE);
-        if (prc.default_v) {
-            ierr=VecShift(x,(1-prc.alpha)/(PetscScalar)prc.N);CHKERRQ(ierr);
-        } else {
-            ierr=VecAXPY(x,1-prc.alpha,prc.v);CHKERRQ(ierr);
-        }
-        ierr=VecAXPY(x,prc.alpha,y);CHKERRQ(ierr);
-        ierr=VecNorm(x,NORM_1,&delta);CHKERRQ(ierr);
+        
+            // begin the inner iteration
+            for (PetscInt inner_iter=0; inner_iter < max_inner_iter && inner_iteration; inner_iter++) {
+                // x <- beta*y + inner_rhs
+                ierr=VecWAXPY(x,beta,y,inner_rhs);CHKERRQ(ierr);
     
+                // y <- P'*x
+                ierr=PageRankDanglingMult(prc,x,y);CHKERRQ(ierr);
+                
+                // compute delta = ||inner_rhs + beta*y - x||_1
+                PetscLogStagePush(STAGE_EVALUATE);
+                //ierr=VecAYPX(x,-1.0,y);CHKERRQ(ierr);
+                ierr=VecAXPBY(x,beta,-1.0,y);CHKERRQ(ierr);  // x <- by - x
+                ierr=VecAXPY(x,1.0,inner_rhs);CHKERRQ(ierr); // x <- x + f = (f + by - x)
+                ierr=VecNorm(x,NORM_1,&delta);CHKERRQ(ierr); // delta = ||x||
+                //PetscPrintf(prc.comm,"%4i  %10.3e\n", inner_iter+1, delta);
+                PetscLogStagePop();
+                if (delta < eta) {
+                    if (inner_iter == 0) { 
+                        inner_iteration = PETSC_FALSE; 
+                        
+                    }
+                    break;
+                }
+            } 
+            
+            // note that x here is not set to the correct entry
+            //  x = (f + by - x)
+            // so undo the changes to x
+            //
+            // we changed x so we didn't have to use another vector
+            // to compute the norm
+            ierr=VecAXPY(x,-1.0,inner_rhs);CHKERRQ(ierr); // x <- x - f = (by - x)
+            ierr=VecAXPBY(x,beta,-1.0,y);CHKERRQ(ierr);  // x <- -x + by = x
+                      
+            PetscLogStagePush(STAGE_EVALUATE);
+            // reuse the f vector to compute the norm here (f = inner_rhs)
+            ierr=VecWAXPY(inner_rhs,-(prc.alpha),y,x);CHKERRQ(ierr); 
+            if (prc.default_v) {
+                ierr=VecShift(inner_rhs,-(1-prc.alpha)/(PetscScalar)prc.N);CHKERRQ(ierr);
+            } else {
+                ierr=VecAXPY(inner_rhs,-(1-prc.alpha),prc.v);CHKERRQ(ierr);
+            }
+            ierr=VecNorm(inner_rhs,NORM_1,&delta);CHKERRQ(ierr);
+            PetscLogStagePop();
+            
+            if (inner_iteration == PETSC_FALSE) {
+                // if we jump out of the iteration, set x 
+                // to the next iterate
+                ierr=VecCopy(y,x);CHKERRQ(ierr);
+                ierr=VecScale(x,prc.alpha);CHKERRQ(ierr);
+                
+                if (prc.default_v) {
+                    ierr=VecShift(x,(1.0-prc.alpha)/(PetscScalar)prc.N);CHKERRQ(ierr);
+                } else {
+                    ierr=VecAXPY(x,(1.0-prc.alpha),prc.v);CHKERRQ(ierr);
+                }
+            }
+            
+        }
+        
+        PetscLogStagePush(STAGE_EVALUATE);
         PetscPrintf(prc.comm,"%4i  %10.3e %1i\n", iter+1, delta, inner_iteration);
         PetscLogStagePop();
+        
     
         if (delta < prc.tol) {
     	   break;
         }
+        
+        
     }
 
   
@@ -478,13 +506,14 @@ PetscErrorCode ComputePageRank_AlgArnoldi(PageRankContext prc,Vec p)
     
     PetscInt k = 8;
     
-    if (prc.trans) {
-        ierr=MatBuildNonzeroColumnIndicator(prc.P,&prc.d);CHKERRQ(ierr);
-    } else {
-        ierr=MatBuildNonzeroRowIndicator(prc.P,&prc.d);CHKERRQ(ierr);
-    }
-    ierr=VecScale(prc.d,-1.0);CHKERRQ(ierr);
-    ierr=VecShift(prc.d,1.0);CHKERRQ(ierr);
+    // I figured out an implementation that doesn't require the dangling vector
+    // if (prc.trans) {
+    //     ierr=MatBuildNonzeroColumnIndicator(prc.P,&prc.d);CHKERRQ(ierr);
+    // } else {
+    //     ierr=MatBuildNonzeroRowIndicator(prc.P,&prc.d);CHKERRQ(ierr);
+    // }
+    // ierr=VecScale(prc.d,-1.0);CHKERRQ(ierr);
+    // ierr=VecShift(prc.d,1.0);CHKERRQ(ierr);
     
     PetscScalar delta;
     
@@ -504,9 +533,9 @@ PetscErrorCode ComputePageRank_AlgArnoldi(PageRankContext prc,Vec p)
     ierr=PetscMalloc(sizeof(PetscScalar)*(k),&svd_sigmas);CHKERRQ(ierr);
     ierr=PetscMalloc(sizeof(PetscScalar)*(k)*(k+1),&H);CHKERRQ(ierr);
     
-    ierr=VecDuplicate(prc.d,&g);CHKERRQ(ierr);
-    ierr=VecDuplicate(prc.d,&w);CHKERRQ(ierr);
-    ierr=VecDuplicateVecs(prc.d,k,&Vs);CHKERRQ(ierr);
+    ierr=VecDuplicate(p,&g);CHKERRQ(ierr);
+    ierr=VecDuplicate(p,&w);CHKERRQ(ierr);
+    ierr=VecDuplicateVecs(p,k,&Vs);CHKERRQ(ierr);
     
     PetscLogStagePush(STAGE_COMPUTE);
     
@@ -645,6 +674,17 @@ PetscErrorCode ComputePageRank_AlgArnoldi(PageRankContext prc,Vec p)
     return (MPI_SUCCESS);
 }
 
+/**
+ * Implement the PageRank multiplication operation on the full
+ * matrix 
+ * 
+ * y = M(a)*x = a*P'*x + a*(d'*x)*v + (1-a)*(e'*x)*v
+ * 
+ * The multiplication is implemented by implicitly constructing
+ * the dangling vector as d'*x = e'*x - e'*P*x.  This operation
+ * take an identical number of flops because the quantity
+ * e'*x is required for the other multiplication.
+ */
 #undef __FUNCT__
 #define __FUNCT__ "PageRankMult"
 PetscErrorCode PageRankMult(PageRankContext prc, Vec x, Vec y)
@@ -652,23 +692,85 @@ PetscErrorCode PageRankMult(PageRankContext prc, Vec x, Vec y)
     //y = a*Pt*x + (a*(d'*x))*v + (1-a)*sum(x)*v;
     PetscErrorCode ierr;
     PetscScalar dtx;
-    PetscScalar sum_x;
-    ierr=VecTDot(prc.d,x,&dtx);CHKERRQ(ierr);
-    ierr=VecSum(x,&sum_x);CHKERRQ(ierr);
+    PetscScalar etx,etPtx;
+    
+    ierr=VecSum(x,&etx);CHKERRQ(ierr);
     if (prc.trans) {
         ierr=MatMult(prc.P,x,y);CHKERRQ(ierr);
     }
     else {
         ierr=MatMultTranspose(prc.P,x,y);CHKERRQ(ierr);
     }
+    // TODO implement a routine to scale and sum y simultaneously
+    ierr=VecSum(y,&etPtx);CHKERRQ(ierr);
     ierr=VecScale(y,prc.alpha);CHKERRQ(ierr);
+    dtx = etx - etPtx;
     if (prc.default_v) {
-        ierr=VecShift(y,(prc.alpha*dtx + (1-prc.alpha)*sum_x)/(PetscScalar)prc.N);CHKERRQ(ierr);
+        ierr=VecShift(y,(prc.alpha*dtx + (1-prc.alpha)*etx)/(PetscScalar)prc.N);CHKERRQ(ierr);
     }
     else {
-        ierr=VecAXPY(y,prc.alpha*dtx + (1-prc.alpha)*sum_x,prc.v);CHKERRQ(ierr);
+        ierr=VecAXPY(y,prc.alpha*dtx + (1-prc.alpha)*etx,prc.v);CHKERRQ(ierr);
     }
     
     return (MPI_SUCCESS);
 }
 
+/**
+ * This function computes a PageRank product with the adjustment from the
+ * dangling node vector to compute a fully stochastic matrix-vector product.
+ * 
+ * Mathematically, it computes y = P'*x + (d'*x)*v.  Internally, it computes
+ * s = e'*x, y = P'*x, d'*x = s - sum(y), so that it does not use 
+ * the dangling vector.  This requires an extra n flops to implement, but
+ * does not require the dangling vector.
+ * 
+ * We choose between the algorithms based on if prc.d exists or not.
+ * 
+ * @param prc the PageRank context
+ * @param x the right hand side vector 
+ * @param y the output (left hand side) vector
+ */
+ 
+#undef __FUNCT__
+#define __FUNCT__ "PageRankDanglingMult"
+PetscErrorCode PageRankDanglingMult(PageRankContext prc, Vec x, Vec y)
+{
+    
+    PetscErrorCode ierr;
+    PetscScalar dtx,etx,etPtx;
+    
+    if (prc.d) 
+    {
+        ierr=VecTDot(prc.d,x,&dtx);CHKERRQ(ierr);
+        if (prc.trans) {
+            ierr=MatMult(prc.P,x,y);CHKERRQ(ierr);
+        }
+        else {
+            ierr=MatMultTranspose(prc.P,x,y);CHKERRQ(ierr);
+        }
+    } 
+    else
+    {
+        // implement the implicit multiplication operation
+        ierr=VecSum(x,&etx);CHKERRQ(ierr);
+        if (prc.trans) {
+            ierr=MatMult(prc.P,x,y);CHKERRQ(ierr);
+        }
+        else {
+            ierr=MatMultTranspose(prc.P,x,y);CHKERRQ(ierr);
+        }
+        ierr=VecSum(y,&etPtx);CHKERRQ(ierr);
+        dtx = etx - etPtx;
+
+    }
+    
+    if (prc.default_v) {
+        ierr=VecShift(y,(dtx)/(PetscScalar)prc.N);CHKERRQ(ierr);
+    }
+    else {
+        ierr=VecAXPY(y,dtx,prc.v);CHKERRQ(ierr);
+    }
+    
+    
+    return (MPI_SUCCESS);
+}
