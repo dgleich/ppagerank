@@ -341,6 +341,7 @@ PetscErrorCode ComputePageRank_AlgInOut(PageRankContext prc,Vec p)
 {
     PetscTruth flag;
     PetscErrorCode ierr;
+    PetscInt inner_iter;
   
     PetscScalar beta=prc.alpha/2;
     ierr=PetscOptionsGetScalar(PETSC_NULL,"-inout_beta",&beta,&flag);CHKERRQ(ierr);
@@ -418,7 +419,7 @@ PetscErrorCode ComputePageRank_AlgInOut(PageRankContext prc,Vec p)
 	       }
         
             // begin the inner iteration
-            for (PetscInt inner_iter=0; inner_iter < max_inner_iter && inner_iteration; inner_iter++) {
+            for (inner_iter=0; inner_iter < max_inner_iter && inner_iteration; inner_iter++) {
                 // x <- beta*y + inner_rhs
                 ierr=VecWAXPY(x,beta,y,inner_rhs);CHKERRQ(ierr);
     
@@ -478,7 +479,7 @@ PetscErrorCode ComputePageRank_AlgInOut(PageRankContext prc,Vec p)
         }
         
         PetscLogStagePush(STAGE_EVALUATE);
-        PetscPrintf(prc.comm,"%4i  %10.3e %1i\n", iter+1, delta, inner_iteration);
+        PetscPrintf(prc.comm,"%4i  %10.3e %1i %2i\n", iter+1, delta, inner_iteration, inner_iter);
         PetscLogStagePop();
         
     
