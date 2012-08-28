@@ -3,7 +3,7 @@
 
 #include <string>
 #include <utility>
-
+#include <algorithm>
 #include <util/string.h>
 
 namespace util
@@ -51,10 +51,10 @@ namespace util
      */
     std::string& lowercase(std::string& str)
     {
-        transform(str.begin(),str.end(),
+        std::transform(str.begin(),str.end(),
             str.begin(), impl::lower_case);
+        return str;
     }
 }
 
 #endif /* CPP_UTIL_STRING_HPP_ */
-

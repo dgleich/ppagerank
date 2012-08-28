@@ -22,7 +22,7 @@
 #include "ppagerank_stages.h"
 
 #include <string>
-#include <vector>
+#include <vector>=
 #include <util/string.h>
 #include <util/file.h>
 #include <util/command_line.hpp>
@@ -302,11 +302,11 @@ PetscErrorCode MatLoadPickType(MPI_Comm comm, const char* filename, Mat *A, cons
     }
     
     // get the extension
-    std::string ext = util::split_filename(std::string(filename)).second;
+    std::string ext(util::split_filename(std::string(filename)).second);
     bool gzipped = false;
     if (ext.compare("gz") == 0) {
         gzipped = true;
-        std::string no_gz_on_file = util::split_filename(std::string(filename)).first;
+        std::string no_gz_on_file(util::split_filename(std::string(filename)).first);
         ext = util::split_filename(no_gz_on_file).second;
     }
     

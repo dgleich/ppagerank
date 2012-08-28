@@ -28,7 +28,7 @@ all: ppagerank
 include ${PETSC_DIR}/bmake/common/base
 
 PPAGERANK_LOCAL_OBJS = ppagerank.o ppagerank_main.o petsc_util.o bvgraph_matrix.o
-PPAGERANK_REMOTE_OBJS = file.o string.o
+PPAGERANK_REMOTE_OBJS = util/file.o util/string.o
 PPAGERANK_REMOTE_OBJS_LINKFILES = file.o string.o
 PPAGERANK_COMPILE_OBJS = $(PPAGERANK_LOCAL_OBJS) $(PPAGERANK_REMOTE_OBJS)
 PPAGERANK_LINK_OBJS = $(PPAGERANK_LOCAL_OBJS) $(PPAGERANK_REMOTE_OBJS_LINKFILES)

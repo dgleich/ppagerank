@@ -103,7 +103,7 @@ PetscErrorCode VecCreateForMatMult(Mat A, Vec *v)
     PetscInt size;
     ierr=MPI_Comm_size(comm,&size);
     if (size == 1) {
-        ierr=VecCreateSeq(N,v);
+        ierr=VecCreateSeq(comm,N,v);
     }
     else {
         ierr=VecCreateMPI(comm,n,N,v);
@@ -135,7 +135,7 @@ PetscErrorCode VecCreateForMatMultTranspose(Mat A, Vec *v)
     PetscInt size;
     ierr=MPI_Comm_size(comm,&size);
     if (size == 1) {
-        ierr=VecCreateSeq(N,v);
+        ierr=VecCreateSeq(comm,N,v);
     }
     else {
         ierr=VecCreateMPI(comm,n,N,v);
@@ -340,8 +340,8 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
     }
     
     PetscInt rstart, rend;
-    rstart = rowners[rank];
-    rend = rowners[rank+1];
+    //rstart = rowners[rank];
+    //rend = rowners[rank+1];
     
     // 
     // * r read degree file and send degree file to each processor

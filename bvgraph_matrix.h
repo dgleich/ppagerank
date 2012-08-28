@@ -231,7 +231,7 @@ namespace yasmic
                 if (fill == 0) { current = read(); fill = 8; }
                 read_bits += len;
                 unsigned int rval = (unsigned)current;
-                return (rval >> ( fill -= len) & (1 << len) - 1);
+                return (rval >> (fill -= len) & ((1 << len) - 1));
             }
         }; // class bit_istream
         

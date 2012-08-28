@@ -6,7 +6,7 @@
 
 namespace util
 {
-    std::pair<std::string, std::string> split_filename(std::string& filename);
+    std::pair<std::string, std::string> split_filename(std::string filename);
     std::string to_lowercase(std::string& str);
     std::string& lowercase(std::string& str);
 }
