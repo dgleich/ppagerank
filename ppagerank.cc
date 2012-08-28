@@ -322,10 +322,11 @@ PetscErrorCode ComputePageRank_AlgPower(PageRankContext prc,Vec p)
         PetscPrintf(prc.comm,"%4i  %10.3e\n", iter+1, delta);
         PetscLogStagePop();
         
+        ierr=VecCopy(y,x);CHKERRQ(ierr);
+        
         if (delta < prc.tol) {
             break;
         }
-        ierr=VecCopy(y,x);CHKERRQ(ierr);
     }
     
     ierr = VecDestroy(y);

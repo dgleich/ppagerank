@@ -194,6 +194,8 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
     MPI_Status status;
     MPI_Comm   comm;
     PetscErrorCode ierr;
+    
+    PetscFunctionBegin;
 
     ierr=PetscCommDuplicate(comm_in,&comm,&tag);CHKERRQ(ierr);
         
@@ -756,7 +758,7 @@ PetscErrorCode MatLoadBSMAT(MPI_Comm comm_in, const char* filename, Mat *newmat)
     
     PetscCommDestroy(&comm);
         
-    return (MPI_SUCCESS);
+    PetscFunctionReturn(0);
 }
 
 
@@ -1660,7 +1662,7 @@ PetscErrorCode PetscSynchronizedFEof(MPI_Comm comm,FILE *f,int *eof)
         // only on the root processor
         *eof = feof(f);
     }
-    ierr=MPI_Bcast(&eof,1,MPI_INT,0,comm);CHKERRQ(ierr);
+    ierr=MPI_Bcast(eof,1,MPI_INT,0,comm);CHKERRQ(ierr);
     
     return (MPI_SUCCESS);
 }

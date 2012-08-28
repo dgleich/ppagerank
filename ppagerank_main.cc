@@ -267,6 +267,8 @@ PetscErrorCode WriteSimpleMatrixStats(const char* filename, Mat A)
 #define __FUNCT__ "MatLoadPickType"  
 PetscErrorCode MatLoadPickType(MPI_Comm comm, const char* filename, Mat *A, const char* filetypehint)
 {
+    PetscFunctionBegin;
+    
     bool hinted = false;
     {
         size_t len;
@@ -278,12 +280,12 @@ PetscErrorCode MatLoadPickType(MPI_Comm comm, const char* filename, Mat *A, cons
         PetscTruth flg;
         PetscStrncmp(filetypehint,"bsmat",PETSC_MAX_PATH_LEN,&flg);
         if (flg) {
-            return MatLoadBSMAT(comm,filename,A);
+            PetscFunctionReturn(MatLoadBSMAT(comm,filename,A));
         }
         
         PetscStrncmp(filetypehint,"bvgraph",PETSC_MAX_PATH_LEN,&flg);
         if (flg) {
-            return MatLoadBVGraph(comm,filename,A);
+            PetscFunctionReturn(MatLoadBVGraph(comm,filename,A));
         }
         
         PetscStrncmp(filetypehint,"cluto",PETSC_MAX_PATH_LEN,&flg);
@@ -309,7 +311,7 @@ PetscErrorCode MatLoadPickType(MPI_Comm comm, const char* filename, Mat *A, cons
     }
     
     if (ext.compare("bsmat") == 0) {
-        return MatLoadBSMAT(comm,filename,A);
+        PetscFunctionReturn(MatLoadBSMAT(comm,filename,A));
     }
     else if (ext.compare("smat") == 0) {
     }
@@ -319,7 +321,7 @@ PetscErrorCode MatLoadPickType(MPI_Comm comm, const char* filename, Mat *A, cons
             // a binary non-gzipped file must be a BVGraph
             util::filetypes ft = util::guess_filetype(filename);
             if (ft == util::filetype_binary) {
-                return MatLoadBVGraph(comm,filename,A);
+                PetscFunctionReturn (MatLoadBVGraph(comm,filename,A));
             }
         } 
     }
@@ -338,7 +340,7 @@ PetscErrorCode MatLoadPickType(MPI_Comm comm, const char* filename, Mat *A, cons
         filename);
     }
     
-    return (MPI_ERR_OTHER);
+    PetscFunctionReturn (MPI_ERR_OTHER);
 }
 
 /**
@@ -369,11 +371,11 @@ PetscErrorCode SetupAndRunComputations(Mat A, PetscTruth script, PetscTruth tran
         char line[options_line_size] = {0};
         
         int eof;
-        ierr=PetscSynchronizedFEof(PETSC_COMM_WORLD, stdin, &eof);CHKERRQ(ierr);
+        ierr=PetscSynchronizedFEof(comm, stdin, &eof);CHKERRQ(ierr);
         while (!eof) {
             // read from stdin
             memset(line,0,sizeof(options_line_size)*sizeof(char));
-            ierr=PetscSynchronizedFGets(PETSC_COMM_WORLD, stdin, 
+            ierr=PetscSynchronizedFGets(comm, stdin, 
                 options_line_size, line);
                 CHKERRQ(ierr);
             std::string linestr(line);
@@ -384,8 +386,10 @@ PetscErrorCode SetupAndRunComputations(Mat A, PetscTruth script, PetscTruth tran
             if (linestr.size() > 0) {
                 script_lines.push_back(linestr);
             }
-            ierr=PetscSynchronizedFEof(PETSC_COMM_WORLD, stdin, &eof);CHKERRQ(ierr);
+            ierr=PetscSynchronizedFEof(comm, stdin, &eof);CHKERRQ(ierr);
         }
+        
+        ierr=MPI_Barrier(comm);CHKERRQ(ierr);
         
         PetscPrintf(comm,"\n");
         PetscPrintf(comm,"-----------------------------------------\n");        
@@ -393,7 +397,7 @@ PetscErrorCode SetupAndRunComputations(Mat A, PetscTruth script, PetscTruth tran
         PetscPrintf(comm,"-----------------------------------------\n");
         PetscPrintf(comm,"\n");
         for(unsigned int runindex = 0; runindex < script_lines.size(); ++runindex) {
-            PetscPrintf(comm,"[%3i] %s\n", runindex+1, script_lines[runindex].c_str());
+            PetscSynchronizedPrintf(comm,"[%3i] %s\n", runindex+1, script_lines[runindex].c_str());
         }
         PetscPrintf(comm,"-----------------------------------------\n");
         PetscPrintf(comm,"\n");
